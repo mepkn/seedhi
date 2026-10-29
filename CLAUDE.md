@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1–5.2. Code in Part 1 is imported from
+  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1–5.3. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -112,9 +112,15 @@ Done:
   and `scripts/smoke-test.sh`; both rulesets require the 3 checks (GitHub Actions app 15368).
   Verified with a drift PR (#6, closed): `checks` and React smoke failed, state `BLOCKED`. Admin
   bypass merges red PRs too, so never `gh pr merge` before checks pass.
+- Lesson 5.3 (session 7): written and verified. Staging is **live, deployed by CI** at
+  https://guestbook-staging.pknspace.com (`guestbook-staging-api-1`, ~27 MB). GitHub setup in
+  PLAN.md (Branches and CI/CD). Both packages have Actions access Write for `seedhi` (set by
+  the user). `deploy` has 2 authorized keys (the Mac's, `seedhi-ci`). First deploy found
+  `docker compose run` eating the `bash -s` script (green step, staging down; smoke test
+  caught it). The classifier blocks adding SSH keys and writing GitHub secrets: ask the user.
 
 Next, in order:
-1. Part 5 (5.3 deploy staging, 5.4 promote, …), then
+1. Part 5 (5.4 promote to production, 5.5 rollback, …), then
    Parts 6–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
