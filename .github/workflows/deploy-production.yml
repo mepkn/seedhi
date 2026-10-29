@@ -49,7 +49,10 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          git merge-base --is-ancestor "$VERSION" HEAD ||
+          # --first-parent: main's own commits, not the staging commits its
+          # merges brought in.
+          sha=$(git rev-parse --verify --quiet "$VERSION^{commit}") &&
+            git rev-list --first-parent HEAD | grep -qx "$sha" ||
             { echo "::error::'$VERSION' is not a commit on main"; exit 1; }
           git checkout --detach "$VERSION"
           git checkout "$GITHUB_SHA" -- scripts/
