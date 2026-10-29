@@ -1,0 +1,113 @@
+# Deploys production on every push to main, which with the rulesets means a
+# merged pull request from staging: QA's approval (lesson 5.4). Nothing is
+# built: the image staging tested is found by the tree hash and gets main's
+# commit as its version. Backs up the database before migrating.
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+    # The guide and notes only: no app change, and never tested on staging.
+    paths-ignore: ["site/**", "**.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    env:
+      APP_ENV: production
+      PORT: ${{ vars.PORT }}
+      TRACK: ${{ vars.TRACK }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Names and tags
+        run: |
+          case "$TRACK" in
+            react-hono-postgres)       image=seedhi-react-api ;;
+            nextjs-fullstack-postgres) image=seedhi-nextjs ;;
+            *) echo "::error::repository variable TRACK is '$TRACK'"; exit 1 ;;
+          esac
+          {
+            echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$image"
+            echo "TAG=$(git rev-parse --short HEAD)"
+            echo "TREE=$(git rev-parse --short 'HEAD^{tree}')"
+          } | tee -a "$GITHUB_ENV"
+
+      # The same files were deployed to staging only if an image with this
+      # tree hash exists. Tag that exact image with main's commit: the push
+      # sends no layers, and the digest must not change.
+      - name: Find the image staging tested
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if ! docker pull -q --platform linux/amd64 "$IMAGE:tree-$TREE"; then
+            echo "::error::no image $IMAGE:tree-$TREE: these files were never deployed to staging. Merge main into staging first."
+            exit 1
+          fi
+          docker tag "$IMAGE:tree-$TREE" "$IMAGE:$TAG"
+          docker push -q "$IMAGE:$TAG"
+          tested=$(docker buildx imagetools inspect "$IMAGE:tree-$TREE" --format '{{json .Manifest.Digest}}')
+          tagged=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}')
+          echo "tree-$TREE $tested"
+          echo "$TAG $tagged"
+          [ "$tested" = "$tagged" ] || { echo "::error::digests differ"; exit 1; }
+
+      - uses: actions/setup-node@v7
+        if: env.TRACK == 'react-hono-postgres'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: examples/react-hono-postgres/frontend/package-lock.json
+      - name: Build the frontend
+        if: env.TRACK == 'react-hono-postgres'
+        run: npm ci --prefix examples/react-hono-postgres/frontend &&
+          npm run build --prefix examples/react-hono-postgres/frontend
+
+      - name: SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host server
+            HostName ${{ vars.DEPLOY_HOST }}
+            Port ${{ vars.DEPLOY_PORT }}
+            User deploy
+            IdentityFile ~/.ssh/deploy
+            BatchMode yes
+          EOF
+
+      - name: Upload the compose file and .env.production
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          scp "examples/$TRACK/server/compose.yml" server:/srv/guestbook/compose.yml
+          printf 'DATABASE_URL=%s\nLOG_LEVEL=info\n' "$DATABASE_URL" |
+            ssh server "umask 077 && cat > /srv/guestbook/.env.$APP_ENV"
+
+      - name: Back up, pull, migrate, start
+        run: ssh server "BACKUP=1 APP_ENV=$APP_ENV PORT=$PORT IMAGE=$IMAGE TAG=$TAG bash -s" < scripts/server-deploy.sh
+
+      - name: Upload the frontend
+        if: env.TRACK == 'react-hono-postgres'
+        run: rsync -az --delete examples/react-hono-postgres/frontend/dist/ "server:${{ vars.WEB_DIR }}/"
+
+      # Read-only: production doesn't fill up with smoke-test entries.
+      - name: Smoke test
+        run: READ_ONLY=1 EXPECT_VERSION="$TAG" scripts/smoke-test.sh "${{ vars.APP_URL }}"
