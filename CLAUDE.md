@@ -107,7 +107,8 @@ Done:
   by accident; fixed by force-pushing `staging` to `main`'s commit, same tree): always
   `gh pr merge staging --merge`. Guide/PLAN edits: either PR flow (feature → staging squash →
   staging → main merge) or a direct push to `main`, then `git push origin main:staging`
-  (fast-forward) so the branches stay level. Merging into `main` may need the user's permission.
+  so the branches stay level (a fast-forward only while `staging` has nothing unpromoted; it
+  also triggers a staging deploy). Merging into `main` may need the user's permission.
 - Lesson 5.2 (session 7): written and verified. `.github/workflows/ci.yml` (3 jobs, ~1 min)
   and `scripts/smoke-test.sh`; both rulesets require the 3 checks (GitHub Actions app 15368).
   Verified with a drift PR (#6, closed): `checks` and React smoke failed, state `BLOCKED`. Admin
