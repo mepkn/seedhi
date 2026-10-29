@@ -6,18 +6,220 @@ sidebar:
   order: 2
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import ciWorkflow from '../../../../../.github/workflows/ci.yml?raw'
+import smokeTest from '../../../../../scripts/smoke-test.sh?raw'
+import stagingRuleset from '../../../../../infra/github/rulesets/staging.json?raw'
+
+export const requiredChecks = stagingRuleset.slice(stagingRuleset.indexOf('    {\n      "type": "required_status_checks"'), stagingRuleset.lastIndexOf('  ]'))
+
 ## Goal
 
-Lint, typecheck, migrations on an empty database, a schema-drift check, a Docker build and a smoke test in the runner.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Every pull request into `staging` or `main` gets checked before it can be merged: typecheck,
+lint and build every part, check that every schema change has its migration, then build the
+production images, run the migrations on an empty database, start the app and smoke-test it.
+CI only checks. It never pushes an image or deploys; that starts in lesson 5.3.
 
 ## Steps
 
+### 1. The smoke test
+
+A smoke test asks one question: is the app up and doing its job? It doesn't test every case,
+only that the main path works end to end: health, the page, a validation error, and an entry
+posted and read back. It's a script you can point at any URL, so CI runs it in the runner
+here, and the deploy workflows will run the same script against staging and production:
+
+<Code code={smokeTest} lang="bash" title="scripts/smoke-test.sh" />
+
+- **The health check retries** for 30 seconds, so the script also works right after a deploy.
+- **The entry has a timestamp** in its message, so the script checks it reads back *its*
+  entry, not an older one.
+- **`READ_ONLY=1`** skips the post. Production won't fill up with smoke-test entries (lesson
+  5.4).
+- **On failure it prints the response body**, which carries the request ID (lesson 1.6), so
+  the matching log line is one `grep` away.
+
+Try it against the production images from lesson 2.2:
+
+```bash
+# in your track's folder, with the images running (docker compose up -d --build --wait)
+../../scripts/smoke-test.sh http://localhost:8080
+```
+
+```
+ok   GET /api/health  {"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"local"}
+ok   GET /            200, HTML
+ok   POST invalid     400 VALIDATION_FAILED
+ok   POST /api/entries 201
+ok   GET /api/entries 200, has the new entry
+smoke test passed: http://localhost:8080
+```
+
+Against something that isn't running it exits with `1` after 30 seconds:
+`FAIL: GET /api/health returned 000`.
+
+### 2. The workflow
+
+GitHub Actions runs every YAML file in `.github/workflows/`. This one runs on every pull
+request into `staging` or `main`:
+
+<Code code={ciWorkflow} lang="yaml" title=".github/workflows/ci.yml" />
+
+Three jobs run side by side, each on a fresh Ubuntu machine:
+
+- **`checks`** installs every part and runs `scripts/check.sh`, the same script you run
+  before committing: typecheck, lint, the site's build, and the check that both tracks'
+  `drizzle/` folders are identical. Then the **schema drift** check: `drizzle-kit generate`
+  compares `schema.ts` with the migrations and writes a new one for any difference. On a clean
+  repository it writes nothing (`No schema changes, nothing to migrate`); any new file means
+  someone changed the schema and forgot `npm run db:generate`.
+- **`smoke (react-hono-postgres)`** and **`smoke (nextjs-fullstack-postgres)`**, from one
+  `matrix`, run each track's `compose.yml` from lesson 2.2: build the images from the
+  Dockerfiles, start a Postgres with an empty volume, run the migrations, start the app and
+  wait for it to be healthy. That's the Docker build and "migrations on an empty database" in
+  one step: if a migration fails, `up --wait` fails. Then the smoke test. Both tracks run,
+  even though only one is deployed, because both live in this repository.
+
+The rest is housekeeping:
+
+- **`concurrency`** cancels a run that's still going when you push again to the same pull
+  request: only the newest commit matters.
+- **`permissions: contents: read`**: the token this workflow gets can read the code and
+  nothing else. Lesson 5.3's workflow asks for more, because it pushes images.
+- **`fail-fast: false`**: one track failing doesn't cancel the other, so you see both results.
+- **`if: always()`** on `Logs` and `Stop`: they run even after a failure, which is exactly when
+  you need the container logs.
+- **`cache: npm`** keeps npm's download cache between runs, keyed on the lockfiles.
+
+The whole run takes about a minute: about 50 seconds for `checks`, a minute for each smoke
+job.
+
+### 3. Open a pull request
+
+The workflow has to be in a pull request before it runs on one. Make it the first one CI
+checks:
+
+```bash
+git switch -c ci-workflow origin/staging
+git add .github/workflows/ci.yml scripts/smoke-test.sh
+git commit -m "feat: CI workflow and smoke test"
+git push -u origin ci-workflow
+gh pr create --base staging --fill
+gh pr checks --watch
+```
+
+```
+checks                              pass  52s  https://github.com/<your-github-user>/seedhi/actions/runs/…
+smoke (nextjs-fullstack-postgres)   pass  1m4s https://github.com/<your-github-user>/seedhi/actions/runs/…
+smoke (react-hono-postgres)         pass  51s  https://github.com/<your-github-user>/seedhi/actions/runs/…
+```
+
+The pull request page shows the same three checks under the merge button.
+
+### 4. Make the checks required
+
+So far the checks only inform. Add them to both rulesets from lesson 5.1, and a red check
+blocks the merge. This is the block added to `main.json` and `staging.json`:
+
+<Code code={requiredChecks} lang="json" title="infra/github/rulesets/staging.json (end)" />
+
+- **`context`** is the job's name as GitHub shows it, matrix value included. Rename a job and
+  the ruleset waits forever for a check that no longer exists ("Expected — Waiting for status
+  to be reported"), so change both together.
+- **`integration_id: 15368`** is GitHub Actions: only Actions can report these checks, not
+  some other app that happens to use the same name.
+- **`strict_required_status_checks_policy: false`**: the branch doesn't have to be up to date
+  with `staging` before merging. With only you merging, that would mean an extra rebase and
+  CI run for nothing.
+
+Apply both files over the existing rulesets (`PUT` replaces a ruleset with the file):
+
+```bash
+gh api repos/<your-github-user>/seedhi/rulesets --jq '.[] | "\(.id) \(.name)"'
+gh api -X PUT repos/<your-github-user>/seedhi/rulesets/<main-id> \
+  --input infra/github/rulesets/main.json --jq '[.rules[].type] | join(", ")'
+gh api -X PUT repos/<your-github-user>/seedhi/rulesets/<staging-id> \
+  --input infra/github/rulesets/staging.json --jq '[.rules[].type] | join(", ")'
+```
+
+```
+deletion, non_fast_forward, pull_request, required_status_checks
+deletion, non_fast_forward, pull_request, required_status_checks
+```
+
+Commit the ruleset change to the same pull request, then merge it into `staging` once CI
+is green: `gh pr merge --squash --delete-branch`.
+
 ## Verify
+
+Break something on purpose: add a column to the schema but don't generate its migration.
+
+```bash
+git switch -c drift-test origin/staging
+# in examples/react-hono-postgres/backend/src/db/schema.ts, below `message`:
+#   country: varchar("country", { length: 2 }),
+git commit -am "test: schema change without a migration"
+git push -u origin drift-test
+gh pr create --base staging --title "test: schema drift" --body "Should fail CI."
+gh pr checks --watch
+gh pr view --json mergeStateStatus --jq .mergeStateStatus
+```
+
+```
+checks                              fail  1m11s
+smoke (react-hono-postgres)         fail  43s
+smoke (nextjs-fullstack-postgres)   pass  58s
+BLOCKED
+```
+
+`BLOCKED`: the merge button is grey for anyone without the bypass. The `checks` log says why:
+
+```
+[✓] Your SQL migration file ➜ drizzle/0001_long_hedge_knight.sql 🚀
+ M examples/react-hono-postgres/backend/drizzle/meta/_journal.json
+?? examples/react-hono-postgres/backend/drizzle/0001_long_hedge_knight.sql
+?? examples/react-hono-postgres/backend/drizzle/meta/0001_snapshot.json
+Error: schema.ts has changes without a migration: run npm run db:generate and commit it
+```
+
+The React smoke test failed too, for the same mistake seen from the outside. The code now
+writes a `country` column that the migrated database doesn't have:
+
+```
+ok   POST invalid     400 VALIDATION_FAILED
+FAIL: POST /api/entries returned 500, expected 201
+{"error":{"code":"INTERNAL","message":"Something went wrong.","requestId":"61bd6d27-…"}}
+```
+
+Two independent checks caught it: one by reading the code, one by running it. The Next.js
+track has its own schema and passed. Close the pull request without merging:
+
+```bash
+gh pr close drift-test --delete-branch
+```
+
+You have the bypass, so `gh pr merge` would still merge a red pull request for you. Don't:
+the rule is there for the times you're in a hurry.
 
 ## What you learned
 
+CI is the same checks you run on your computer, run by someone who never forgets. Each check
+catches a different kind of mistake: the type checker catches wrong code, the drift check
+catches a forgotten migration, the smoke test catches anything that only shows when the real
+images run against a real database. Running the production images in CI means a pull request
+is tested in the same shape it will be deployed. And a check only protects a branch once the
+ruleset requires it.
+
 ## Undo
+
+Remove the required checks: drop the `required_status_checks` block from both JSON files and
+`PUT` them again (step 4). Then remove the workflow and the script with a pull request:
+
+```bash
+git switch -c remove-ci origin/staging
+git rm .github/workflows/ci.yml scripts/smoke-test.sh
+git commit -m "chore: remove CI"
+```
+
+Lesson 5.1's undo removes the rulesets altogether, and Part 8 does that with the rest (8.3).
+Workflow runs and their logs stay in the Actions tab until GitHub expires them (90 days).
