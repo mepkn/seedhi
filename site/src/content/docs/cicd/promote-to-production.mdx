@@ -6,18 +6,219 @@ sidebar:
   order: 4
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import workflow from '../../../../../.github/workflows/deploy-production.yml?raw'
+import serverDeploy from '../../../../../scripts/server-deploy.sh?raw'
+
+export const backupBlock = serverDeploy.slice(serverDeploy.indexOf('  # BACKUP=1'), serverDeploy.indexOf('  docker compose -p "$project" run'))
+
 ## Goal
 
-A pull request from staging to main is the QA approval; production reuses the exact image QA tested.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Production deploys itself when a pull request from `staging` into `main` is merged. That merge
+is QA's approval: whoever tested staging says "ship it" by merging. Nothing is built for
+production. It runs the exact image QA tested on staging, after a database backup, and is
+smoke-tested without writing anything.
 
 ## Steps
 
+### 1. QA on staging
+
+Staging is where a change is seen for the first time as users will see it: the production
+image, a real database with migrations already applied, behind Cloudflare and Caddy. Before
+promoting, whoever does QA (you, here) checks:
+
+- **The deploy is green** and its smoke test passed: `gh run list -w deploy-staging.yml -L 1`.
+- **Staging runs the commit you think it does**: the footer, or
+  `curl -s https://guestbook-staging.<your-domain>/api/health`.
+- **The change itself works**, in a browser, including the error cases. The smoke test only
+  covers the main path.
+- **The logs are quiet**: as `deploy`, `docker logs guestbook-staging-api-1 --since 10m`
+  shows no `"level":50` (error) lines.
+
+Write down what you checked in the promotion pull request's description. Months later, that's
+the record of what was tested before this went out.
+
+### 2. Why not build again?
+
+Staging tested one image. Building production from `main` would make a second image from the
+same files: almost always the same, but not provably. A base image updated in between, or a
+dependency resolved differently, and production runs something nobody tested.
+
+Lesson 4.1 tagged every image with the tree hash for this. A merge commit from `staging` has
+exactly `staging`'s files, so `main`'s tree hash after the merge names the image staging ran:
+
+```
+staging  5380aa9 ──┐ tree baa01a2 ──► image tree-baa01a2, 5380aa9   (built, lesson 5.3)
+main     e0bb5f7 ──┘ tree baa01a2 ──► same image, tagged e0bb5f7   (this lesson)
+```
+
+The image gets `main`'s commit as a third tag, because the tag becomes `APP_VERSION`: the
+footer and the logs then name the commit that's in production.
+
+If `main`'s tree has no image, those files never ran on staging. The workflow stops there
+instead of building: `no image …:tree-… : these files were never deployed to staging`. That
+happens when something reached `main` without going through `staging`: a hotfix (lesson
+5.6) or a push with the admin bypass. Merge `main` into `staging`, let staging deploy, then
+promote.
+
+### 3. The production Environment
+
+Like staging's in lesson 5.3, but only `main` may use it:
+
+```bash
+R=<your-github-user>/seedhi
+gh api -X PUT repos/$R/environments/production --input - <<'EOF'
+{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+EOF
+gh api -X POST repos/$R/environments/production/deployment-branch-policies \
+  -f name=main -f type=branch
+gh variable set APP_URL -R $R -e production -b https://guestbook.<your-domain>
+gh variable set PORT -R $R -e production -b 3100
+gh variable set WEB_DIR -R $R -e production -b /var/www/guestbook
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip> '. /srv/guestbook/postgres/db-passwords &&
+  printf "postgres://guestbook_prod:%s@postgres:5432/guestbook_prod" "$PROD_DB_PASSWORD"' |
+  gh secret set DATABASE_URL -R $R -e production
+```
+
+The repository-wide secrets (the SSH key, the host key) and `TRACK` are shared with staging.
+In a team, this is also where you'd add **required reviewers** (Settings → Environments →
+production): the run then waits for one of them to click **Approve**. Here, merging the
+pull request already is the approval.
+
+### 4. A backup before every migration
+
+`scripts/server-deploy.sh` from lesson 5.3 gets one more block, which runs when the workflow
+sets `BACKUP=1`:
+
+<Code code={backupBlock} lang="bash" title="scripts/server-deploy.sh (excerpt)" />
+
+- **Before the migration**: a migration that drops or changes data (Part 7 has one) can't be
+  undone by deploying the previous image, but a dump from a minute earlier restores it.
+- **`pg_dump` runs inside the Postgres container**, as the superuser over its local socket,
+  so no password is needed and no client is installed on the server.
+- **`--clean --if-exists`**: the dump drops each table before recreating it, so it restores
+  over an existing database.
+- **`umask 077`**: the dumps hold every entry, so only `deploy` can read them.
+- **Its own statements**, not `pg_dump … | gzip > … && mv …`. In a line with `&&`, `set -e`
+  doesn't stop the script when the left side fails, so a failed dump would go on to the
+  migration. Written apart, a failed dump ends the deploy before anything changes.
+- **Five kept**, named with the commit, so you can tell which deploy each one came before.
+
+These dumps live on the same disk as the database. They protect against a bad migration,
+not against losing the server: lesson 6.5 copies nightly backups off the server.
+
+### 5. The workflow
+
+<Code code={workflow} lang="yaml" title=".github/workflows/deploy-production.yml" />
+
+Most of it is lesson 5.3's workflow. The differences:
+
+- **`on: push: branches: [main]`** with **`paths-ignore`**: a push that only changes the
+  guide (`site/`) or Markdown files doesn't deploy. There's nothing new to run.
+- **"Find the image staging tested"** replaces the build: pull `tree-<tree>`, tag it with the
+  commit, push. The push sends no layers, only a new name for the same manifest. Then it
+  compares the two digests and stops if they differ. `docker buildx imagetools create`, the
+  obvious tool for retagging, fails that check: it wraps the image in a new index with its
+  own digest. Pull, tag, push keeps it.
+- **`BACKUP=1`** for step 4.
+- **`READ_ONLY=1`** on the smoke test: health, the page, a validation error and the entry list,
+  but no post. Production's entries are real ones.
+
+### 6. Promote
+
+Once QA is happy:
+
+```bash
+gh pr create --base main --head staging --title "Promote staging to main" \
+  --body "QA: staging runs 5380aa9, smoke test passed."
+gh pr checks staging --watch
+gh pr merge staging --merge
+gh run watch
+```
+
+`--merge`, never `--squash` (lesson 5.1): `main` must get `staging`'s commits so the tree
+hashes match. A squash would also have the same files, but the next promotion would carry
+every change since the beginning.
+
 ## Verify
+
+The run, trimmed:
+
+```
+TAG=e0bb5f7
+TREE=baa01a2
+tree-baa01a2 "sha256:c1960a84b8f83cf655aeed9d5f5804ca104f68c05fcd8b7c73991711a07291e0"
+e0bb5f7 "sha256:c1960a84b8f83cf655aeed9d5f5804ca104f68c05fcd8b7c73991711a07291e0"
+ Image ghcr.io/<your-github-user>/seedhi-react-api:e0bb5f7 Pulled
+backup: backups/guestbook_prod-20261029T191118Z-e0bb5f7.sql.gz (4.0K)
+{"level":30,…,"env":"production","version":"e0bb5f7","msg":"migrations applied"}
+ Container guestbook-production-api-1 Recreated
+ Container guestbook-production-api-1 Healthy
+guestbook-production-api-1 ghcr.io/<your-github-user>/seedhi-react-api:e0bb5f7 Up 2 seconds (healthy)
+kept: 5380aa9 e0bb5f7 be76738
+ok   GET /api/health  {"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"e0bb5f7"}
+ok   GET /            200, HTML
+ok   POST invalid     400 VALIDATION_FAILED
+ok   GET /api/entries 200
+smoke test passed: https://guestbook.<your-domain>
+```
+
+One digest under both names. `kept:` lists tags: `5380aa9` and `e0bb5f7` are one image,
+`be76738` the one before it. Lesson 4.2's `2a0fe02` is gone now that no container uses it.
+
+On the server, as `deploy`: staging and production run the same image ID, the backup is
+there and private, and the real entries are untouched:
+
+```bash
+docker ps --format '{{.Names}} {{.Image}}' | grep api
+docker image ls --format '{{.ID}} {{.Tag}}' ghcr.io/<your-github-user>/seedhi-react-api
+ls -l /srv/guestbook/backups
+curl -s 127.0.0.1:3100/api/entries
+```
+
+```
+guestbook-production-api-1 ghcr.io/<your-github-user>/seedhi-react-api:e0bb5f7
+guestbook-staging-api-1 ghcr.io/<your-github-user>/seedhi-react-api:5380aa9
+c1960a84b8f8 5380aa9
+c1960a84b8f8 e0bb5f7
+e88f05eca9f4 be76738
+-rw------- 1 deploy deploy 1286 Oct 29 19:11 guestbook_prod-20261029T191118Z-e0bb5f7.sql.gz
+[{"id":2,"name":"Seedhi","message":"Posted through Cloudflare and Caddy",…},{"id":1,…}]
+```
+
+GitHub keeps a history of what ran where, which lesson 5.5 uses for rollbacks:
+
+```bash
+gh api repos/<your-github-user>/seedhi/deployments --jq '.[:3][] | "\(.environment) \(.sha[:7])"'
+```
+
+```
+production e0bb5f7
+staging 5380aa9
+staging be76738
+```
+
+This lesson's own pull requests change only `site/` and Markdown files: their promotion
+deploys staging (which deploys on every push) but not production.
 
 ## What you learned
 
+Promotion moves a tested artifact; it doesn't rebuild one. The tree hash connects the two: same
+files, same image, proven by the digest. QA is a step with an owner and a record, the
+promotion pull request. A deploy that can lose data takes a backup first, and the order (back
+up, migrate, start) puts the irreversible step after the safety net. And a tool that seems to
+do the obvious thing, like `imagetools create` for a retag, is worth checking against what
+you actually need.
+
 ## Undo
+
+Production keeps running: taking it down is lesson 4.2's undo. To stop deploying it
+automatically, remove the workflow with a pull request and delete the Environment (with its
+variables and secret):
+
+```bash
+gh api -X DELETE repos/<your-github-user>/seedhi/environments/production
+```
+
+On the server, as `deploy`: `rm -r /srv/guestbook/backups`. Lesson 4.1's undo deletes the
+images with all their tags; Part 8 does all of it (8.1, 8.3).
