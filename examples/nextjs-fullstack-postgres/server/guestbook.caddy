@@ -1,0 +1,14 @@
+# The server's Caddy config for this track (lesson 3.4), copied to
+# /etc/caddy/sites/guestbook.caddy. Cloudflare Tunnel sends both hostnames to
+# :8080; Caddy passes everything to the Next.js container (production on
+# 127.0.0.1:3100, staging on 3101), which serves pages and /api itself.
+# Replace pknspace.com with your domain.
+http://guestbook.pknspace.com:8080 {
+	encode gzip
+	reverse_proxy 127.0.0.1:3100
+}
+
+http://guestbook-staging.pknspace.com:8080 {
+	encode gzip
+	reverse_proxy 127.0.0.1:3101
+}

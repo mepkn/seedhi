@@ -62,6 +62,10 @@ Each database has its own owner role (`guestbook_staging`, `guestbook_prod`, `RE
 FROM PUBLIC`), so staging can't connect to production. The container (`infra/compose/postgres.yml`
 → `/srv/guestbook/postgres/compose.yml`, project `guestbook-postgres`, volume `guestbook-pgdata`)
 publishes no port; apps join the external `guestbook` network and use host `postgres`.
+Apps publish `127.0.0.1:3100` (production) and `127.0.0.1:3101` (staging), the same in both
+tracks. Each track's `server/guestbook.caddy` → `/etc/caddy/sites/guestbook.caddy` (both
+hostnames); the React track serves `/var/www/guestbook` and `/var/www/guestbook-staging`
+(owned by `deploy`) and proxies `/api/*`.
 
 **Low-memory mode** (for this 1 GB VPS; optional in the guide, lesson 5.7): repo variable
 `LOW_MEMORY=true` stops staging after a successful production deploy; manual

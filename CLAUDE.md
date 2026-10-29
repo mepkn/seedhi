@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks) and Part 2 (2.1–2.3) and 3.1–3.3. Code in Part 1 is imported from
+  (1.1–1.9, both tracks) and Part 2 (2.1–2.3) and Part 3 (3.1–3.4). Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -70,9 +70,16 @@ Done:
   (`STAGING_DB_PASSWORD`, `PROD_DB_PASSWORD`; 4.2 reads it for `.env.production`).
   `postgres:18-alpine` is a new image vs the baseline (teardown removes it).
 
+- Lesson 3.4 (session 5): React track live on the VPS as routing only:
+  `/etc/caddy/sites/guestbook.caddy` (from `examples/react-hono-postgres/server/`),
+  `/var/www/guestbook{,-staging}` (deploy-owned, placeholder `index.html` each; 4.2 replaces).
+  `/api` gives 502 until the app runs on 127.0.0.1:3100/3101. Behind cloudflared, Caddy's
+  `X-Forwarded-For` is `::1`; real IP only in `CF-Connecting-IP`. Shiki has no `caddy`
+  language: use `lang="txt"`.
+
 Next, in order:
-1. Lesson 3.4 (deploy will need write access to `/var/www/guestbook` for the React track),
-   and Parts 4–8, each verified on the real VPS before its lesson is written.
+1. Part 4 (4.1 push images to GHCR, 4.2 deploy production by hand, React track first), then
+   Parts 5–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
 

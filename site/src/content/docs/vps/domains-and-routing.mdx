@@ -6,18 +6,213 @@ sidebar:
   order: 4
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import reactCaddy from '../../../../../examples/react-hono-postgres/server/guestbook.caddy?raw'
+import nextCaddy from '../../../../../examples/nextjs-fullstack-postgres/server/guestbook.caddy?raw'
+
 ## Goal
 
-Subdomains, the Cloudflare Tunnel and a Caddy site file that proxies /api.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Make `guestbook.<your-domain>` and `guestbook-staging.<your-domain>` reach the server, and give
+Caddy a site file that sends each request to the right place. No app runs yet, so you prove
+the routing with a placeholder page and a throwaway container. Part 4 then only has to start
+the app.
 
 ## Steps
 
+### 1. How a request gets in
+
+```
+browser ──https──► Cloudflare ──tunnel──► cloudflared ──http──► Caddy :8080 ──► files or app
+                   (TLS, DNS)             (on the server)        (picks the site by hostname)
+```
+
+The server opens no web port to the internet (lesson 3.1). `cloudflared` keeps an outgoing
+connection to Cloudflare open, and Cloudflare sends each request for your hostnames down it.
+Cloudflare handles HTTPS, so Caddy only speaks plain HTTP, to `cloudflared` on the same
+machine, and picks a site by the `Host` header.
+
+Each app gets a fixed local port, published to `127.0.0.1` only:
+
+| | production | staging |
+|---|---|---|
+| Hostname | `guestbook.<your-domain>` | `guestbook-staging.<your-domain>` |
+| App port | `127.0.0.1:3100` | `127.0.0.1:3101` |
+| Static files (React + Hono) | `/var/www/guestbook` | `/var/www/guestbook-staging` |
+
+Both tracks use the same ports, which works because only one is deployed at a time.
+
+### 2. Add the hostnames to the tunnel
+
+In the Cloudflare dashboard: **Zero Trust → Networks → Tunnels →** your tunnel **→ Public
+Hostname → Add a public hostname**, twice:
+
+| Subdomain | Domain | Service |
+|---|---|---|
+| `guestbook` | your domain | `HTTP` · `localhost:8080` |
+| `guestbook-staging` | your domain | `HTTP` · `localhost:8080` |
+
+Cloudflare creates the DNS records (a `CNAME` to the tunnel) for you. Test right away:
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://guestbook.<your-domain>/
+```
+
+```
+200 0
+```
+
+The request already reaches Caddy: an empty `200` is what Caddy answers for a hostname it
+has no site for. If you get Cloudflare's `530` or `1033` error instead, the route or the tunnel
+is wrong.
+
+### 3. Folders for the static files (React + Hono)
+
+The React track's frontend is plain files that Caddy serves itself; CI will upload them as
+`deploy`. Create one folder per environment, owned by `deploy`:
+
+```bash
+sudo install -d -m 755 -o deploy -g deploy /var/www/guestbook /var/www/guestbook-staging
+```
+
+Give each a placeholder, as `deploy`, so you can tell them apart:
+
+```bash
+echo "<h1>guestbook: production</h1>" > /var/www/guestbook/index.html
+echo "<h1>guestbook: staging</h1>" > /var/www/guestbook-staging/index.html
+```
+
+The Next.js track serves its own pages and needs neither folder.
+
+### 4. The Caddy site file
+
+<Tabs syncKey="track">
+  <TabItem label="React + Hono">
+
+<Code code={reactCaddy} lang="txt" title="examples/react-hono-postgres/server/guestbook.caddy" />
+
+The same rules as the track's local `Caddyfile` (lesson 2.2), with the server's paths and
+ports. `handle` blocks are tried in order: `/api/*` goes to the API, everything else is a
+file. `try_files {path} /index.html` returns `index.html` for paths that are not files, so a
+reload on a client-side route still loads the app.
+
+  </TabItem>
+  <TabItem label="Next.js">
+
+<Code code={nextCaddy} lang="txt" title="examples/nextjs-fullstack-postgres/server/guestbook.caddy" />
+
+Next.js serves pages, assets and `/api` itself, so Caddy passes everything on.
+
+  </TabItem>
+</Tabs>
+
+`http://` and `:8080` make Caddy listen on plain HTTP on the tunnel's port; without them it
+would try to get a certificate, which Cloudflare already handles. Put the file where your
+Caddy reads its sites, check the whole config, and reload:
+
+```bash
+sudo cp guestbook.caddy /etc/caddy/sites/guestbook.caddy
+caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+```
+Valid configuration
+```
+
+Your main `Caddyfile` needs `import /etc/caddy/sites/*.caddy` for this; if it keeps every
+site in one file, paste the two blocks into it instead. On this guide's server `pkn` owns
+`/etc/caddy/sites/`, so it copies the file without `sudo` and reloads with
+`caddy reload --config /etc/caddy/Caddyfile`. A reload swaps the config without dropping a
+connection, and an invalid file is refused and the old config kept.
+
 ## Verify
+
+From your computer, through Cloudflare:
+
+```bash
+for h in guestbook guestbook-staging; do
+  for p in / /some/page /api/health; do
+    curl -s -o /dev/null -w "$h $p %{http_code}\n" https://$h.<your-domain>$p
+  done
+done
+```
+
+<Tabs syncKey="track">
+  <TabItem label="React + Hono">
+
+```
+guestbook / 200
+guestbook /some/page 200
+guestbook /api/health 502
+guestbook-staging / 200
+guestbook-staging /some/page 200
+guestbook-staging /api/health 502
+```
+
+The page (and the fallback for `/some/page`) shows the right placeholder per hostname. `/api`
+gives `502 Bad Gateway`: Caddy passed it on and nothing answered on the port yet.
+
+  </TabItem>
+  <TabItem label="Next.js">
+
+Every path gives `502 Bad Gateway`: Caddy passes the request on, and nothing listens on 3100
+or 3101 yet.
+
+  </TabItem>
+</Tabs>
+
+Now put something on port 3100 that echoes what it receives. As `deploy`:
+
+```bash
+docker run -d --rm --name echo-test -p 127.0.0.1:3100:8000 caddy:2-alpine \
+  caddy respond --listen :8000 --body "path={http.request.uri} host={http.request.host} \
+cf-connecting-ip={http.request.header.CF-Connecting-IP} \
+x-forwarded-for={http.request.header.X-Forwarded-For}
+"
+```
+
+From your computer:
+
+```bash
+curl -s https://guestbook.<your-domain>/api/health
+curl -s https://api.ipify.org; echo
+```
+
+```
+path=/api/health host=guestbook.pknspace.com cf-connecting-ip=106.219.91.43 x-forwarded-for=::1
+106.219.91.43
+```
+
+The request reached the production port with its path and hostname intact, and staging is
+still `502`: the two sites are separate.
+
+Look at the two IP headers. `CF-Connecting-IP` is your real address, added by Cloudflare.
+`X-Forwarded-For` is `::1`: Caddy sets it to the address the request came from, which is
+`cloudflared` on the same machine. That is why the guestbook's rate limit (lesson 1.6) reads
+`CF-Connecting-IP` first. It can trust that header only because nobody can reach Caddy without
+going through Cloudflare (lesson 3.1); on a server where port 8080 is open, anyone could send
+a fake one.
+
+Stop the echo container:
+
+```bash
+docker stop echo-test
+```
 
 ## What you learned
 
+A hostname reaches your app in three hops: Cloudflare's DNS and tunnel, Caddy choosing a site
+by `Host`, and a `127.0.0.1` port for the app. Test each hop on its own: an empty `200` means
+Cloudflare reaches Caddy, a `502` means Caddy has a site but the app isn't up, and an echo
+container shows exactly what the app will receive. Behind a proxy, the client's address comes
+from a header, and that header is only as trustworthy as the path in front of it.
+
 ## Undo
+
+```bash
+sudo rm /etc/caddy/sites/guestbook.caddy && sudo systemctl reload caddy
+sudo rm -rf /var/www/guestbook /var/www/guestbook-staging
+```
+
+Delete the two public hostnames from the tunnel in lesson 8.3, with the rest of the cloud
+side; Cloudflare removes their DNS records with them.
