@@ -69,12 +69,21 @@ jobs:
 
       # The same files were deployed to staging only if an image with this
       # tree hash exists. Tag that exact image with main's commit: the push
-      # sends no layers, and the digest must not change.
+      # sends no layers, and the digest must not change. A rollback instead
+      # uses the image tagged with its commit, the one that ran in production:
+      # the tree tag may point to a newer build of the same files by now.
       - name: Find the image staging tested
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ROLLBACK: ${{ inputs.version }}
         run: |
           echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ -n "$ROLLBACK" ]; then
+            docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1 ||
+              { echo "::error::no image $IMAGE:$TAG: $TAG never ran in production"; exit 1; }
+            echo "rollback: $TAG $(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}')"
+            exit 0
+          fi
           if ! docker pull -q --platform linux/amd64 "$IMAGE:tree-$TREE"; then
             echo "::error::no image $IMAGE:tree-$TREE: these files were never deployed to staging. Merge main into staging first."
             exit 1
