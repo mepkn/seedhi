@@ -1,0 +1,7 @@
+# Keep the build context small and secrets out of the image: only what the
+# Dockerfile copies is needed.
+node_modules
+.env
+.env.*
+Dockerfile
+.dockerignore

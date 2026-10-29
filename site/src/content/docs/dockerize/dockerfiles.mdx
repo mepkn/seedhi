@@ -6,18 +6,267 @@ sidebar:
   order: 1
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import apiDockerfile from '../../../../../examples/react-hono-postgres/backend/Dockerfile?raw'
+import apiDockerignore from '../../../../../examples/react-hono-postgres/backend/.dockerignore?raw'
+import nextDockerfile from '../../../../../examples/nextjs-fullstack-postgres/Dockerfile?raw'
+import nextDockerignore from '../../../../../examples/nextjs-fullstack-postgres/.dockerignore?raw'
+import nextConfig from '../../../../../examples/nextjs-fullstack-postgres/next.config.ts?raw'
+
 ## Goal
 
-Write multi-stage Dockerfiles that produce small images: the API image, the static frontend build, the Next.js standalone server.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Write multi-stage Dockerfiles that produce small images: the API image, the static frontend
+build, the Next.js standalone server. The image is what the server will run, so it holds the
+app and its runtime dependencies, and nothing else: no dev tools, no `.env`, no secrets.
 
 ## Steps
 
+### 1. What goes into the image
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+Only the **API** becomes an image. The frontend is a folder of static files (`npm run build`
+→ `frontend/dist/`); the server's Caddy serves them directly (lesson 3.4), so they need no
+container and no memory of their own. On a 1 GB server that matters.
+
+The backend has no build step either: Node 22.18+ runs the `.ts` files directly. So the image
+is just the production dependencies, `src/` and the migrations in `drizzle/`.
+
+</TabItem>
+<TabItem label="Next.js">
+
+The whole app is one image: the Next.js server renders the page, runs the Server Action and
+answers `/api`. `next build` compiles it, and the image keeps only the build output.
+
+</TabItem>
+</Tabs>
+
+The same image also runs the **migrations**, with a different command, as a one-off container
+before the app starts (lesson 2.2). One image means the migrations always match the code.
+
+### 2. The Dockerfile
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+<Code code={apiDockerfile} lang="dockerfile" title="backend/Dockerfile" />
+
+- **Two stages.** `npm ci` runs in the first; the second copies only `node_modules`. The npm
+  cache and anything else the install left behind stays in the first stage, which is thrown
+  away.
+- **`--omit=dev`**: no TypeScript, ESLint, Drizzle Kit or pino-pretty in production.
+- **Package files first.** Docker caches each step. Copying `package.json` and the lockfile
+  before the source means the slow `npm ci` is reused until the dependencies change; editing
+  `src/` only redoes the last few cheap steps.
+- **`USER node`**: the official image ships an unprivileged `node` user. If someone breaks into
+  the app, they are not root in the container.
+- **No `.env`, no `ENV DATABASE_URL`.** Configuration arrives when the container starts
+  (lesson 2.3). `NODE_ENV=production` is the one exception: it is the same everywhere the image
+  runs.
+
+</TabItem>
+<TabItem label="Next.js">
+
+First, tell Next.js to produce a standalone build:
+
+<Code code={nextConfig} lang="ts" title="next.config.ts" />
+
+`output: "standalone"` makes `next build` trace which files the server actually loads and copy
+just those into `.next/standalone/`, with a small `server.js` to start it. No `npm install` in
+the image, and no 300 MB of `node_modules`. The app uses no `<Image>`, so the image optimizer
+and its native libraries are left out too.
+
+<Code code={nextDockerfile} lang="dockerfile" title="Dockerfile" />
+
+- **Four stages**, and only the last one ships. Stages 1 and 2 hold every dev dependency and
+  the full source; the runtime image gets the build output from them and nothing else.
+- **Stage 3 is for the migrations.** The standalone server bundles `drizzle-orm` and `zod` into
+  its own compiled files, but `src/db/migrate.ts` runs with plain `node` and imports them from
+  `node_modules`. So this stage installs the runtime dependencies without Next.js and React,
+  and the runtime image starts from that `node_modules`; the standalone files are copied on
+  top. Same lockfile, same versions.
+- **`.next/static` and `public/` are copied separately**: the standalone output does not
+  include them, because Next.js expects a CDN to serve them. Here `server.js` serves them
+  itself.
+- **`HOSTNAME=0.0.0.0`**: inside a container the server must listen on every interface, or
+  nothing outside the container can reach it.
+- **`USER node`**: the official image ships an unprivileged `node` user, so the server does
+  not run as root.
+
+</TabItem>
+</Tabs>
+
+### 3. `.dockerignore`
+
+`docker build` first sends the folder (the *build context*) to Docker. `.dockerignore` keeps
+things out of it:
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+<Code code={apiDockerignore} lang="sh" title="backend/.dockerignore" />
+
+</TabItem>
+<TabItem label="Next.js">
+
+<Code code={nextDockerignore} lang="sh" title=".dockerignore" />
+
+This one matters most here: the Dockerfile does `COPY . .`, and `next build` reads any `.env`
+file it finds. Without `.dockerignore`, your development `.env` would be copied into the
+build stage.
+
+</TabItem>
+</Tabs>
+
+`node_modules` is excluded as well: your Mac's copy has macOS binaries and would be replaced
+by `npm ci` anyway.
+
+### 4. Build
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+cd examples/react-hono-postgres
+docker build -t seedhi-react-api backend
+```
+
+The first build takes about half a minute (it downloads the Node image); after that, a code
+change rebuilds in seconds.
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+cd examples/nextjs-fullstack-postgres
+docker build -t seedhi-nextjs .
+```
+
+The first build takes a minute or two (`next build` runs inside the container).
+
+</TabItem>
+</Tabs>
+
+:::tip[`permission denied` on `~/.docker/buildx/current`?]
+A file in `~/.docker` belongs to root, usually after an earlier `sudo docker ...`. Give it
+back to yourself: `sudo chown -R "$(whoami)" ~/.docker`.
+:::
+
 ## Verify
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+docker images seedhi-react-api
+```
+
+```
+IMAGE                     ID             DISK USAGE   CONTENT SIZE
+seedhi-react-api:latest   9607f5c83414        272MB         64.8MB
+```
+
+About 65 MB compressed (what gets pushed and pulled); most of the 272 MB on disk is the Node
+base image, which every Node image on the server shares. Look inside:
+
+```bash
+docker run --rm seedhi-react-api ls -a
+docker run --rm seedhi-react-api whoami
+```
+
+```
+.
+..
+drizzle
+node_modules
+package.json
+src
+node
+```
+
+No `.env`, no dev tooling, not root. Now start it with no configuration at all:
+
+```bash
+docker run --rm seedhi-react-api
+```
+
+```
+Invalid environment:
+✖ Invalid input: expected string, received undefined
+  → at DATABASE_URL
+```
+
+That is the startup check from lesson 1.4 working inside the container: the image runs, and
+refuses to start without its configuration. Lesson 2.2 gives it some.
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+docker images seedhi-nextjs
+```
+
+```
+IMAGE                  ID             DISK USAGE   CONTENT SIZE
+seedhi-nextjs:latest   d329ef9be008        296MB         68.5MB
+```
+
+About 70 MB compressed (what gets pushed and pulled); most of the 296 MB on disk is the Node
+base image. Look inside:
+
+```bash
+docker run --rm seedhi-nextjs ls -a
+docker run --rm seedhi-nextjs whoami
+```
+
+```
+.
+..
+.next
+drizzle
+node_modules
+package.json
+public
+server.js
+src
+node
+```
+
+`src/` holds only the migrate script and the two files it imports; the app itself is compiled
+into `.next/`. No `.env`, not root. Now start it with no configuration at all:
+
+```bash
+docker run --rm seedhi-nextjs
+```
+
+```
+▲ Next.js 16.4.3
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 0ms
+✓ Running next.config took 0.6ms
+Invalid environment:
+✖ Invalid input: expected string, received undefined
+  → at DATABASE_URL
+```
+
+`instrumentation.ts` loads `env.ts` as the server starts, and the check stops it. The image
+runs, and refuses to start without its configuration. Lesson 2.2 gives it some.
+
+</TabItem>
+</Tabs>
 
 ## What you learned
 
+An image is a sealed copy of the app and exactly what it needs to run. Multi-stage builds keep
+the tools that *make* it out of the thing that *runs*, layer order keeps rebuilds fast, and
+`.dockerignore` keeps your local files, secrets included, out of it.
+
 ## Undo
+
+Nothing is on the server yet. To remove the image from your computer:
+
+```bash
+docker rmi seedhi-react-api   # or seedhi-nextjs
+```

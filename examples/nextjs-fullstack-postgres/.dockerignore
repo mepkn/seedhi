@@ -1,0 +1,9 @@
+# Keep the build context small and secrets out of the image: `next build`
+# reads .env files it finds, and COPY . . would copy them in.
+node_modules
+.next
+.env
+.env.*
+Dockerfile
+.dockerignore
+compose.yml

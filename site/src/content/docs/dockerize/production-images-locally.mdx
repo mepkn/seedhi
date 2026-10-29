@@ -6,18 +6,229 @@ sidebar:
   order: 2
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import reactCompose from '../../../../../examples/react-hono-postgres/compose.yml?raw'
+import caddyfile from '../../../../../examples/react-hono-postgres/Caddyfile?raw'
+import nextCompose from '../../../../../examples/nextjs-fullstack-postgres/compose.yml?raw'
+
 ## Goal
 
-Run the production images and a one-off migrate container on your Mac before any server is involved.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Run the production images and a one-off migrate container on your Mac before any server is
+involved. If it works here, the server only adds a domain and real secrets; if it breaks here,
+you find out in seconds instead of during a deploy. CI will run this same file to smoke-test
+every pull request (lesson 5.2).
 
 ## Steps
 
+### 1. The compose file
+
+Stop the development Postgres first if you like (`docker compose -f infra/compose/dev.yml
+down`); this stack has its own, with its own volume, and publishes no database port.
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+<Code code={reactCompose} lang="yaml" title="compose.yml" />
+
+And the Caddy config it mounts, the same routing the server will use:
+
+<Code code={caddyfile} lang="txt" title="Caddyfile" />
+
+</TabItem>
+<TabItem label="Next.js">
+
+<Code code={nextCompose} lang="yaml" title="compose.yml" />
+
+</TabItem>
+</Tabs>
+
+- **Startup order** comes from `depends_on` conditions: Postgres must be *healthy*, then
+  `migrate` must *exit with 0*, and only then does the app start. A failed migration leaves
+  the old data untouched and the new app never starts.
+- **`migrate` uses the app's image** with a different `command`. The image is built once
+  (`build:` on both services names the same image).
+- **The app's healthcheck** calls `/api/health`, which answers 503 when the database is down,
+  so "healthy" means "can serve requests", not just "process is running". `start_interval`
+  checks every 2 s while it starts, then every 30 s, to keep the logs quiet.
+- **`x-…-env` and `&` / `*`** are YAML anchors: one block of environment variables, used by
+  both containers.
+- **Throwaway values, written inline.** The password is `guestbook` and that is fine: nothing
+  here is reachable from outside your computer. Lesson 2.3 covers where real values live.
+- **Port 8080, on `127.0.0.1` only**: the port the server's Caddy listens on, and only your
+  computer can reach it.
+
+### 2. Start it
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+Build the frontend first; Caddy serves `frontend/dist`:
+
+```bash
+cd examples/react-hono-postgres
+(cd frontend && npm run build)
+docker compose up -d --build --wait
+```
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+cd examples/nextjs-fullstack-postgres
+docker compose up -d --build --wait
+```
+
+</TabItem>
+</Tabs>
+
+`--build` rebuilds the image if the code changed; `--wait` returns once every service is
+healthy (or has exited successfully), and fails if one isn't.
+
 ## Verify
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+docker compose ps -a --format 'table {{.Service}}\t{{.Status}}'
+```
+
+```
+SERVICE    STATUS
+api        Up 6 seconds (healthy)
+migrate    Exited (0) 6 seconds ago
+postgres   Up 13 seconds (healthy)
+web        Up Less than a second
+```
+
+`migrate` ran once and exited with 0, as it should. Now the API through Caddy:
+
+```bash
+curl -s localhost:8080/api/health
+curl -s -X POST localhost:8080/api/entries -H 'content-type: application/json' \
+  -d '{"name":"Docker","message":"Posted through Caddy"}'
+curl -s localhost:8080/api/nope
+```
+
+```json
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"local"}
+{"id":1,"name":"Docker","message":"Posted through Caddy","createdAt":"2026-10-29T14:43:20.395Z"}
+{"error":{"code":"NOT_FOUND","message":"Not found.","requestId":"f8732bd5-…"}}
+```
+
+Open http://localhost:8080: the page lists the entry, the form works, and the footer reads
+`react-hono-postgres · production · local · db up`.
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+docker compose ps -a --format 'table {{.Service}}\t{{.Status}}'
+```
+
+```
+SERVICE    STATUS
+app        Up 5 seconds (healthy)
+migrate    Exited (0) 6 seconds ago
+postgres   Up 11 seconds (healthy)
+```
+
+`migrate` ran once and exited with 0, as it should. Now the app:
+
+```bash
+curl -s localhost:8080/api/health
+curl -s -X POST localhost:8080/api/entries -H 'content-type: application/json' \
+  -d '{"name":"Docker","message":"Posted to the Next.js image"}'
+```
+
+```json
+{"ok":true,"db":"up","track":"nextjs-fullstack-postgres","env":"production","version":"local"}
+{"id":1,"name":"Docker","message":"Posted to the Next.js image","createdAt":"2026-10-29T14:46:30.057Z"}
+```
+
+Open http://localhost:8080: the entry is in the page, the form (the Server Action) adds a new
+one, and the footer reads `nextjs-fullstack-postgres · production · local · db up`.
+
+</TabItem>
+</Tabs>
+
+The logs are the JSON lines the server will produce, with `"env":"production"`:
+
+```bash
+docker compose logs migrate --no-log-prefix
+```
+
+```json
+{"level":30,"time":"…","track":"…","env":"production","version":"local","msg":"migrations applied"}
+```
+
+Running the migrations again is safe; Drizzle skips the ones already recorded:
+
+```bash
+docker compose run --rm migrate
+```
+
+It logs `migrations applied` again and changes nothing.
+
+Finally, stop the database and watch the health check notice:
+
+```bash
+docker compose stop postgres
+curl -s -w ' %{http_code}\n' localhost:8080/api/health
+docker compose up -d --wait postgres
+curl -s -w ' %{http_code}\n' localhost:8080/api/health
+```
+
+```
+{"ok":false,"db":"down",…} 503
+{"ok":true,"db":"up",…} 200
+```
+
+The app survives a database restart and reconnects on its own. This 503 is what the uptime
+monitor will alert on in Part 6.
+
+How much memory does it use?
+
+```bash
+docker stats --no-stream --format '{{.Name}} {{.MemUsage}}'
+```
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```
+seedhi-react-web-1 12.06MiB / 3.893GiB
+seedhi-react-api-1 30.88MiB / 3.893GiB
+seedhi-react-postgres-1 26.86MiB / 3.893GiB
+```
+
+On the server there is no `web` container: the system Caddy already running there does its
+job.
+
+</TabItem>
+<TabItem label="Next.js">
+
+```
+seedhi-nextjs-app-1 56.87MiB / 3.893GiB
+seedhi-nextjs-postgres-1 29.2MiB / 3.893GiB
+```
+
+</TabItem>
+</Tabs>
+
+Idle numbers; they grow under load. Part 3 gives every container a hard limit.
 
 ## What you learned
 
+Production is a set of images plus configuration, started in a fixed order: database, then
+migrations, then app. Running that on your computer first turns most deploy failures into
+local ones.
+
 ## Undo
+
+```bash
+docker compose down      # stop and remove the containers, keep the data
+docker compose down -v   # also delete this stack's database volume
+```
+
+Only one track can use port 8080 at a time: `down` one before starting the other.

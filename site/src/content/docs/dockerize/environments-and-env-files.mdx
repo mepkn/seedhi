@@ -6,18 +6,187 @@ sidebar:
   order: 3
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import gitignore from '../../../../../.gitignore?raw'
+
 ## Goal
 
-dev, CI, staging and production: which values change, where each .env file lives, and why secrets never go into images or git.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+dev, CI, staging and production: which values change, where each `.env` file lives, and why
+secrets never go into images or git. By the end you have run the production image with an
+env file shaped exactly like the one the server will have.
 
 ## Steps
 
+### 1. One image, four environments
+
+The guestbook runs in four places (lesson 0.1). The **image is the same** in CI, staging and
+production; only its configuration changes:
+
+| Variable | dev (Mac) | CI | staging | production |
+|---|---|---|---|---|
+| `APP_ENV` | `development` | `production` | `staging` | `production` |
+| `DATABASE_URL` | dev container on `127.0.0.1` | compose's `postgres` | `…/guestbook_staging` | `…/guestbook_prod` |
+| `APP_VERSION` | `dev` | commit SHA | commit SHA | commit SHA |
+| `LOG_LEVEL` | `debug` | `info` | `info` | `info` |
+| `NODE_ENV` | set by `next dev` / unset | `production` (in the image) | same | same |
+
+Everything that differs is a runtime variable. Nothing about an environment is decided when
+the image is built, which is what lets production run the exact image QA tested on staging
+(Part 5).
+
+**`APP_ENV` is not `NODE_ENV`.** `NODE_ENV=production` tells libraries to run in production
+mode (React, Next.js, Express-style frameworks all check it), and should be `production` on
+staging too: staging must behave like production. `APP_ENV` says *which* environment this is,
+for logs, the footer, Sentry and guards like the seed script's.
+
+### 2. Where each value lives
+
+| File | Where | Committed | Holds |
+|---|---|---|---|
+| `.env.example` | each part | yes | every variable, with dev defaults and comments |
+| `.env` | each part, on your Mac | no | your dev values (copied from `.env.example`) |
+| `compose.yml` | each track | yes | throwaway values for local and CI runs (lesson 2.2) |
+| `.env.staging`, `.env.production` | `/srv/guestbook/` on the VPS, `chmod 600` | no | written by CI from GitHub Environment secrets (Part 5) |
+
+How each one reaches the process:
+
+- **dev**: `node --env-file-if-exists=.env` (the backend, migrate and seed scripts) or
+  `next dev`, which reads `.env` itself.
+- **local and CI**: `environment:` in `compose.yml`.
+- **server**: the server's compose file has `env_file: .env.production`, which is the same
+  thing as `docker run --env-file` below.
+
+Either way, the app sees plain environment variables and checks them at startup
+(`src/env.ts`, lesson 1.4). It never reads a file itself.
+
+Git keeps the real files out:
+
+<Code code={gitignore.slice(gitignore.indexOf('# env files'), gitignore.indexOf('# Next.js'))} lang="sh" title=".gitignore (env files)" />
+
+And each `.dockerignore` (lesson 2.1) keeps them out of the image.
+
+### 3. Run the image with a server-style env file
+
+Start the stack from lesson 2.2 (`docker compose up -d --wait` in the track folder). Then, in
+the same folder, write the file the way the server will have it: readable by you only.
+
+```bash
+umask 077
+cat > .env.production <<'EOF'
+APP_ENV=production
+DATABASE_URL=postgres://guestbook:guestbook@postgres:5432/guestbook
+APP_VERSION=from-env-file
+LOG_LEVEL=info
+EOF
+ls -l .env.production
+```
+
+```
+-rw-------  1 you  staff  128 Oct 29 20:17 .env.production
+```
+
+`umask 077` makes new files `600` in this shell, so the file is never readable by others, even
+for a moment. One `KEY=value` per line, no quotes needed, no `export`.
+
+Start a second copy of the app with it, on the compose network so `postgres` resolves, on
+port 3001:
+
+```bash
+docker run -d --rm --name guestbook-envtest --network seedhi-react_default \
+  --env-file .env.production -p 127.0.0.1:3001:3000 seedhi-react-api
+curl -s localhost:3001/api/health
+docker stop guestbook-envtest
+```
+
+For the Next.js track, use `--network seedhi-nextjs_default` and the image `seedhi-nextjs`.
+
+```json
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"from-env-file"}
+```
+
+The version comes from the file. Now make a typo, the kind that happens when a secret is
+pasted by hand:
+
+```bash
+sed -i '' 's/^APP_ENV=production/APP_ENV=prod/' .env.production   # GNU sed: sed -i '…'
+docker run --rm --network seedhi-react_default --env-file .env.production seedhi-react-api
+```
+
+```
+Invalid environment:
+✖ Invalid option: expected one of "development"|"staging"|"production"
+  → at APP_ENV
+```
+
+The container exits with code 1 and says exactly what is wrong. On the server, a deploy with
+a broken env file fails here, at startup, and the smoke test catches it, instead of the app
+running half-configured.
+
+### 4. What never goes into an image or the bundle
+
+**Secrets in images.** Anyone who can pull an image can read every file and every `ENV` in it,
+and images get pushed to registries (Part 4). So images hold no secrets, and that is easy to
+check:
+
+```bash
+docker image inspect seedhi-react-api --format '{{json .Config.Env}}'
+```
+
+```json
+["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","NODE_VERSION=22.23.4","YARN_VERSION=1.22.22","NODE_ENV=production"]
+```
+
+The Next.js image adds `NEXT_TELEMETRY_DISABLED`, `PORT` and `HOSTNAME`; nothing else.
+
+**Build-time variables.** `VITE_*` (Vite) and `NEXT_PUBLIC_*` (Next.js) are different from
+everything above: they are copied into the JavaScript at **build** time and sent to every
+visitor's browser. They are public by definition, never a place for a secret, and changing
+one means a new build. The guestbook has none: the frontend calls same-origin `/api`, so it
+needs no API URL, and one build works in every environment.
+
 ## Verify
+
+In the track folder:
+
+```bash
+git check-ignore -v .env.production
+```
+
+```
+.gitignore:34:.env.*	.env.production
+```
+
+The file is ignored, so it can't be committed by accident.
+
+```bash
+docker run --rm seedhi-react-api sh -c \
+  'find / -name ".env*" -not -path "/proc/*" -not -path "*/node_modules/*"'
+```
+
+Prints nothing: no env file anywhere in the image (same for `seedhi-nextjs`).
+
+React + Hono only, the frontend build holds no API address:
+
+```bash
+grep -rl 'localhost:3000' frontend/dist || echo "no API URL in dist"
+```
+
+```
+no API URL in dist
+```
 
 ## What you learned
 
+Configuration belongs to the environment, not the code or the image: the same image runs
+everywhere, each environment hands it its own values at startup, and the app refuses to start
+when they are wrong. Secrets live only in git-ignored, `chmod 600` files, and anything with a
+`VITE_` or `NEXT_PUBLIC_` prefix is public.
+
 ## Undo
+
+```bash
+rm .env.production
+docker compose down -v
+```
+
+Part 2 is done: both tracks run as production images. Part 3 prepares the VPS to run them.

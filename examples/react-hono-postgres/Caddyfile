@@ -1,0 +1,14 @@
+# What Caddy does for this track, on your computer (compose.yml) and on the
+# server (lesson 3.4): serve the built frontend and pass /api to the API, so
+# the browser only ever talks to one origin.
+:8080 {
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		encode gzip
+		file_server
+	}
+}

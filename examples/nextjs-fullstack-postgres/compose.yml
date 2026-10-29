@@ -1,0 +1,61 @@
+# The production image on your computer (lesson 2.2) and in CI: Postgres, a
+# one-off migrate container and the Next.js server. Every value here is
+# throwaway; on the server the real ones come from
+# /srv/guestbook/.env.production (lesson 2.3).
+#   docker compose up -d --build --wait
+#   open http://localhost:8080
+name: seedhi-nextjs
+
+# The app's environment, shared by the migrate and app containers.
+x-app-env: &app-env
+  APP_ENV: production
+  DATABASE_URL: postgres://guestbook:guestbook@postgres:5432/guestbook
+  APP_VERSION: local
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: guestbook
+      POSTGRES_PASSWORD: guestbook
+      POSTGRES_DB: guestbook
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guestbook -d guestbook"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Runs the migrations and exits; the app starts only if it succeeded.
+  migrate:
+    image: seedhi-nextjs
+    build: .
+    command: ["node", "src/db/migrate.ts"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # On the server, system Caddy passes every request to this container; here
+  # the port is published directly, on the same 8080 as the React track.
+  app:
+    image: seedhi-nextjs
+    build: .
+    environment: *app-env
+    ports:
+      - "127.0.0.1:8080:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+
+volumes:
+  pgdata:

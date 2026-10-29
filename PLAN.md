@@ -40,6 +40,12 @@ self-contained (copy one folder, ignore the other). `scripts/check.sh` checks th
 `drizzle/` folders are identical. The React frontend imports the API contract
 (`backend/src/contract.ts`) so the form and the API validate with the same schema.
 
+Images run as a non-root user and also run the migrations (`node src/db/migrate.ts`). Each
+track has a `compose.yml` (Postgres → one-off `migrate` → app, throwaway inline values, port
+`127.0.0.1:8080`) for running production images locally and in CI; the React track's adds a
+Caddy container serving `frontend/dist` with the track's `Caddyfile`, which the server's
+Caddy config mirrors (on the server, system Caddy does that job).
+
 B (Next.js static export) and C (Next.js SSR + separate API) are a short "Variations" page only.
 
 ## Environments

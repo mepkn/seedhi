@@ -53,6 +53,8 @@ npm run dev
 | `scripts/deploy-site.sh` | Check, build and upload the guide (`DRY_RUN=1` previews) |
 | `docker compose -f infra/compose/dev.yml up -d --wait` | Start development Postgres |
 | `docker compose -f infra/compose/dev.yml down -v` | Stop it and delete its data |
+| `docker compose up -d --build --wait` (in a track folder) | Production images + Postgres on `localhost:8080` (React: build `frontend/` first) |
+| `docker compose down -v` (in a track folder) | Stop that stack and delete its data |
 
 `examples/react-hono-postgres/backend/`:
 
@@ -104,6 +106,10 @@ examples/react-hono-postgres/
   backend/src/routes/                   /api/entries, /api/health
   backend/src/db/                       schema, pool, migrate, seed
   backend/drizzle/                      migrations
+  backend/Dockerfile                    API image (also runs the migrations)
+  compose.yml, Caddyfile                production images locally and in CI
   frontend/src/                         the guestbook page
+examples/nextjs-fullstack-postgres/
+  Dockerfile, compose.yml               standalone image (also runs the migrations), local stack
 site/src/content/docs/                  the guide, one folder per part
 ```

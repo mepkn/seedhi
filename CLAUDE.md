@@ -8,14 +8,14 @@ repo `mepkn/seedhi` (public).
 branches and CI/CD, migrations, VPS memory budget, monitoring tools, alerts, the lesson list and
 names. Don't re-decide what it settles; if something must change, update PLAN.md too.
 
-## Status (2026-10-29, session 3)
+## Status (2026-10-29, session 4)
 
 Done:
 - `examples/react-hono-postgres/`: backend (Hono, Drizzle, Zod, pino, request IDs, rate limit,
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
-- `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3) and Part 1
-  (1.1–1.9, both tracks). Code in Part 1 is imported from
+- `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
+  (1.1–1.9, both tracks) and Part 2 (2.1–2.3). Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -35,18 +35,26 @@ Done:
   startup (`env.ts` skips the check during `next build`). `drizzle/` and the db scripts are
   copies of the React track's (`scripts/check.sh` diffs `drizzle/`). Its `DATABASE_URL` uses
   `127.0.0.1`: with `localhost`, a stopped database gives an `AggregateError` that crashes
-  `next dev` (prod is fine). `output: "standalone"` is left for lesson 2.1. Verified against
+  `next dev` (prod is fine). Verified against
   Postgres with curl and in the browser; Part 1's Next.js tabs are filled.
 - `infra/compose/dev.yml` (Postgres 18 for development), `scripts/check.sh`, `scripts/deploy-site.sh`.
 - Guide deployed: `/var/www/seedhi`, `/etc/caddy/sites/seedhi.caddy` (multi-page static block
   with a 404 page, not the SPA block).
 - Cloudflare Tunnel routes exist for `seedhi`, `guestbook`, `guestbook-staging` (all →
   `http://localhost:8080`). No Caddy files for the guestbook hostnames yet (lesson 3.4).
+- Part 2 (session 4, 2026-10-29): `backend/Dockerfile` (2 stages) and the Next.js
+  `Dockerfile` (4 stages: deps, build, migrate-deps, runtime; `output: "standalone"`, sharp
+  excluded). The standalone server bundles drizzle-orm and zod, so a migrate-deps stage installs
+  the runtime deps minus next/react into the runtime `node_modules` (standalone copied on top);
+  both images run `node src/db/migrate.ts` for migrations. Per-track `compose.yml` (+ React's
+  `Caddyfile`) runs the images locally on :8080. Lessons 2.1–2.3 written; every Verify run on
+  this Mac (images ~65/~70 MB compressed; idle RAM: API 31 MB, Next.js 57 MB, Postgres ~27 MB).
+  On this Mac `~/.docker/buildx/current` is owned by root, so `docker compose --build` fails
+  until `sudo chown -R "$(whoami)" ~/.docker` (workaround: `BUILDX_CONFIG=<other dir>`).
 
 Next, in order:
-1. Part 2: Dockerfiles for both tracks, compose for running production images locally, the env
-   files lesson (2.3).
-2. Then Parts 3–8 in order, each verified on the real VPS before its lesson is written.
+1. Parts 3–8 in order, each verified on the real VPS before its lesson is written. Part 3
+   first (check whether a swapfile is possible on this container-like VPS before 3.2).
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
 

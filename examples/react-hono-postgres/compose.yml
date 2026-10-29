@@ -1,0 +1,69 @@
+# The production images on your computer (lesson 2.2) and in CI: Postgres, a
+# one-off migrate container, the API, and Caddy serving frontend/dist the way
+# the server does. Every value here is throwaway; on the server the real ones
+# come from /srv/guestbook/.env.production (lesson 2.3).
+#   (cd frontend && npm ci && npm run build)
+#   docker compose up -d --build --wait
+#   open http://localhost:8080
+name: seedhi-react
+
+# The API's environment, shared by the migrate and api containers.
+x-api-env: &api-env
+  APP_ENV: production
+  DATABASE_URL: postgres://guestbook:guestbook@postgres:5432/guestbook
+  APP_VERSION: local
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: guestbook
+      POSTGRES_PASSWORD: guestbook
+      POSTGRES_DB: guestbook
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guestbook -d guestbook"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Runs the migrations and exits; the API starts only if it succeeded.
+  migrate:
+    image: seedhi-react-api
+    build: ./backend
+    command: ["node", "src/db/migrate.ts"]
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: seedhi-react-api
+    build: ./backend
+    environment: *api-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+
+  web:
+    image: caddy:2-alpine
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./frontend/dist:/srv:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
