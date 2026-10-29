@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs on the server as deploy, in /srv/guestbook: lesson 4.2's three commands
 # (pull, migrate, start), then removes old images of this app. The deploy
-# workflows send it over SSH with the four variables set:
+# workflows send it over SSH with the four variables set (production adds
+# BACKUP=1):
 #   ssh deploy@<server> "APP_ENV=staging PORT=3101 IMAGE=… TAG=… bash -s" < scripts/server-deploy.sh
 set -euo pipefail
 
@@ -15,6 +16,23 @@ main() {
 
   local project="guestbook-$APP_ENV"
   docker compose -p "$project" pull --quiet
+
+  # BACKUP=1 (production): dump the database before migrating, so a migration
+  # that damages data can be undone. The last five dumps stay in backups/.
+  if [ "${BACKUP:-0}" = 1 ]; then
+    local db dump
+    db=$(sed -nE 's#^DATABASE_URL=.*/([^/?]+).*#\1#p' ".env.$APP_ENV")
+    dump="backups/$db-$(date -u +%Y%m%dT%H%M%SZ)-$TAG.sql.gz"
+    umask 077
+    mkdir -p backups
+    # Its own statements: in `a | b && c`, set -e would ignore a failing dump.
+    docker exec guestbook-postgres pg_dump -U postgres --clean --if-exists "$db" </dev/null |
+      gzip > "$dump.tmp"
+    mv "$dump.tmp" "$dump"
+    echo "backup: $dump ($(du -h "$dump" | cut -f1))"
+    ls -1t backups/"$db"-*.sql.gz | tail -n +6 | xargs -r rm --
+  fi
+
   docker compose -p "$project" run --rm -T migrate </dev/null
   docker compose -p "$project" up -d --wait --remove-orphans
   docker compose -p "$project" ps --format '{{.Name}} {{.Image}} {{.Status}}'
