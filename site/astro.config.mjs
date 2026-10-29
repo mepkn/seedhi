@@ -12,6 +12,7 @@ export default defineConfig({
       logo: { src: './public/favicon.svg' },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/mepkn/seedhi' }],
       customCss: ['./src/styles/theme.css'],
+      routeMiddleware: './src/routeData.ts',
       sidebar: [
         { label: "0 · Start", items: [{ autogenerate: { directory: "start" } }] },
         { label: "1 · Develop", items: [{ autogenerate: { directory: "develop" } }] },
