@@ -6,18 +6,286 @@ sidebar:
   order: 2
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import reactCompose from '../../../../../examples/react-hono-postgres/server/compose.yml?raw'
+import nextCompose from '../../../../../examples/nextjs-fullstack-postgres/server/compose.yml?raw'
+
 ## Goal
 
-SSH in, pull, migrate and start: do once by hand what CI/CD will automate.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Put the guestbook live at `guestbook.<your-domain>`: write the production env file, pull the
+image from lesson 4.1, run the migrations and start the app. You do every step by hand once,
+so that in Part 5 you know exactly what the workflow does for you.
 
 ## Steps
 
+### 1. What goes where
+
+```
+/srv/guestbook/                    owned by deploy, 750
+├── compose.yml                    the app, for both environments (this lesson)
+├── .env.production                runtime config, 600 (this lesson)
+└── postgres/                      the database (lesson 3.3)
+/var/www/guestbook/                the built frontend (React + Hono only)
+```
+
+Everything else is already in place: the `deploy` user (3.1), Postgres and the
+`guestbook_prod` database (3.3), and Caddy routing `guestbook.<your-domain>` to
+`127.0.0.1:3100` (3.4).
+
+### 2. The server's compose file
+
+Each track has a `server/compose.yml`: the local `compose.yml` from lesson 2.2 minus Postgres
+and the build, plus what a server needs, and with one change in how migrations run.
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+<Code code={reactCompose} lang="yaml" title="examples/react-hono-postgres/server/compose.yml" />
+</TabItem>
+<TabItem label="Next.js">
+<Code code={nextCompose} lang="yaml" title="examples/nextjs-fullstack-postgres/server/compose.yml" />
+</TabItem>
+</Tabs>
+
+- **One file, two environments.** `${APP_ENV}`, `${PORT}`, `${IMAGE}` and `${TAG}` are filled
+  in from your shell when you run `docker compose`. Production and staging (Part 5) run the
+  same file as two projects, `-p guestbook-production` and `-p guestbook-staging`, so their
+  containers have different names and never replace each other.
+- **Two kinds of variables.** `${…}` in the file is read by Compose on the server, from your
+  shell: which image, which port. `env_file:` is read by the app inside the container: the
+  database password and settings. Only the second kind holds secrets.
+- **`:?` fails loudly.** Forget one variable and Compose stops before doing anything:
+  `required variable TAG is missing a value: set TAG`. Without `?`, it would quietly use an
+  empty string.
+- **`APP_VERSION: ${TAG}`.** The tag is the commit SHA, so the footer and every log line say
+  which commit runs, with nothing extra to keep in sync.
+- **`127.0.0.1:` on the port.** Only Caddy on the same machine reaches the app; nothing else
+  can, whatever the firewall says.
+- **`external: true`.** The `guestbook` network belongs to the Postgres project. This
+  project joins it and never creates or removes it.
+- **`migrate` has a profile instead of a `depends_on`.** `up` ignores services with a profile,
+  so the migrations run only when you ask (`docker compose run migrate`), before `up`. Step 5
+  shows why.
+- **`restart: unless-stopped`** on the app (not on `migrate`, which must run once and exit),
+  plus the `mem_limit` and log cap from lesson 3.2.
+
+### 3. The production env file
+
+Log in as `deploy` and build the file from the password lesson 3.3 generated. Nothing is
+printed or typed by hand:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip>
+cd /srv/guestbook
+. postgres/db-passwords
+umask 077
+cat > .env.production <<EOF
+DATABASE_URL=postgres://guestbook_prod:$PROD_DB_PASSWORD@postgres:5432/guestbook_prod
+LOG_LEVEL=info
+EOF
+ls -l .env.production
+```
+
+```
+-rw------- 1 deploy deploy 132 Oct 29 17:40 .env.production
+```
+
+`APP_ENV` and `APP_VERSION` aren't in it: the compose file sets them from `${APP_ENV}` and
+`${TAG}`, so the file can't disagree with the command. To look at it without showing the
+password: `sed -E 's/:[^:@]*@/:***@/' .env.production`.
+
+### 4. Upload
+
+From the repo on your computer, copy your track's compose file:
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+scp -i ~/.ssh/seedhi_deploy examples/react-hono-postgres/server/compose.yml \
+  deploy@<server-ip>:/srv/guestbook/compose.yml
+```
+
+The frontend is plain files, so build it and copy the result to the folder Caddy serves:
+
+```bash
+cd examples/react-hono-postgres/frontend
+npm ci && npm run build
+rsync -az --delete -e "ssh -i ~/.ssh/seedhi_deploy" dist/ \
+  deploy@<server-ip>:/var/www/guestbook/
+```
+
+The trailing `/` on `dist/` copies its contents, not the folder. `--delete` removes the
+placeholder from lesson 3.4 and, on later deploys, the old hashed `assets/` files. The build
+has no environment in it (lesson 2.3), so the same `dist/` works for staging too.
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+scp -i ~/.ssh/seedhi_deploy examples/nextjs-fullstack-postgres/server/compose.yml \
+  deploy@<server-ip>:/srv/guestbook/compose.yml
+```
+
+The image serves the pages too, so there is nothing else to upload. Lesson 3.4's Next.js
+site file sends every request to the container.
+
+</TabItem>
+</Tabs>
+
+### 5. Pull, migrate, start
+
+As `deploy` in `/srv/guestbook`, set the four variables. `TAG` is the commit SHA you pushed in
+lesson 4.1:
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+export APP_ENV=production PORT=3100 TAG=<sha> \
+  IMAGE=ghcr.io/<your-github-user>/seedhi-react-api
+```
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+export APP_ENV=production PORT=3100 TAG=<sha> \
+  IMAGE=ghcr.io/<your-github-user>/seedhi-nextjs
+```
+
+</TabItem>
+</Tabs>
+
+Then deploy, three commands chained with `&&` so each runs only if the one before succeeded:
+
+```bash
+docker compose -p guestbook-$APP_ENV pull &&
+docker compose -p guestbook-$APP_ENV run --rm migrate &&
+docker compose -p guestbook-$APP_ENV up -d --wait
+```
+
+```
+ Image ghcr.io/<your-github-user>/seedhi-react-api:2a0fe02 Pulled
+ Container guestbook-production-migrate-run-92363574e5fb Created
+{"level":30,"time":"2026-10-29T17:45:05.923Z","track":"react-hono-postgres","env":"production","version":"2a0fe02","msg":"migrations applied"}
+ Container guestbook-production-api-1 Created
+ Container guestbook-production-api-1 Started
+ Container guestbook-production-api-1 Healthy
+```
+
+(Next.js names the app container `app`.)
+
+1. **Pull** the image. Downloading first means the slow part happens while the old version
+   still serves.
+2. **Migrate** in a one-off container that prints its log and is removed (`--rm`). Exit code 0
+   lets the chain go on; anything else stops it there.
+3. **Start**: replace the app container with the new image and, with `--wait`, return only
+   once its health check passes. If it never does, the command fails, which is what a deploy
+   script (Part 5) checks. Between the old container stopping and the new one starting, the
+   site is down for a few seconds: one container can't be replaced without a gap.
+
+**Why not `depends_on`?** Lesson 2.2's local file starts the app with `depends_on: migrate:
+condition: service_completed_successfully`, and on a fresh start that works. On an *update*
+it doesn't: `up` replaces every changed container first, then runs `migrate`. This guide
+tried it on the server with a migration that fails:
+
+```
+ Container guestbook-production-api-1 Recreated
+ Container guestbook-production-migrate-1 Error service "migrate" didn't complete successfully: exit 1
+```
+
+```
+guestbook-production-api-1       ghcr.io/…/seedhi-react-api:tree-804e909   Created
+```
+
+The old app was already gone, the new one never started: the site was down until the next
+deploy. With the profile and `&&`, the same failing migration stops the chain at step 2, and
+the old version keeps running, healthy:
+
+```
+guestbook-production-api-1      ghcr.io/…/seedhi-react-api:2a0fe02   Up 38 seconds (healthy)
+```
+
 ## Verify
+
+As `deploy` in `/srv/guestbook`, with the variables still exported:
+
+```bash
+docker compose -p guestbook-production ps --format "table {{.Name}}\t{{.Status}}"
+curl -s 127.0.0.1:3100/api/health
+```
+
+```
+NAME                         STATUS
+guestbook-production-api-1   Up 2 seconds (healthy)
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"2a0fe02"}
+```
+
+Only the app is listed: the migrate container was removed after it ran, and its log was the
+JSON line in step 5's output.
+
+Now from your computer, the way a visitor gets in (Cloudflare → tunnel → Caddy → app):
+
+```bash
+curl -s https://guestbook.<your-domain>/api/health
+curl -s -i -X POST https://guestbook.<your-domain>/api/entries \
+  -H 'content-type: application/json' \
+  -d '{"name":"Seedhi","message":"Posted through Cloudflare and Caddy"}' | grep -iE '^HTTP|x-request-id'
+```
+
+```
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"2a0fe02"}
+HTTP/1.1 201 Created
+x-request-id: 92af5aaa-6747-470c-b423-6b2143fcce32
+```
+
+Open `https://guestbook.<your-domain>` in a browser: the entry is there, and the footer shows
+the track, `production` and the commit. The request ID leads to the matching log line on the
+server:
+
+```bash
+docker compose -p guestbook-production logs --no-log-prefix api | grep 92af5aaa
+```
+
+```json
+{"level":30,"time":"2026-10-29T17:42:21.664Z","track":"react-hono-postgres","env":"production","version":"2a0fe02","requestId":"92af5aaa-6747-470c-b423-6b2143fcce32","method":"POST","path":"/api/entries","status":201,"ms":14,"msg":"request"}
+```
+
+And memory, against lesson 3.2's budget:
+
+```bash
+docker stats --no-stream --format "{{.Name}} {{.MemUsage}}" | grep guestbook
+```
+
+```
+guestbook-production-api-1 32.64MiB / 128MiB
+guestbook-postgres 21.28MiB / 160MiB
+```
+
+The Next.js app uses about 69 MiB of its 256 MiB at this point.
 
 ## What you learned
 
+A deploy is three steps in a fixed order: get the exact image, migrate, start and wait for
+healthy, and each step runs only if the one before succeeded. Where the migration runs
+matters: before anything touches the running version, so a failure costs nothing. One compose
+file serves several environments when everything that differs is a variable, and two kinds
+of variables keep the secrets in the env file, away from the command line. Doing it by hand
+once shows what Part 5's workflow has to do: copy the files, set the variables, run the
+three commands, check the result.
+
 ## Undo
+
+As `deploy` in `/srv/guestbook`. Compose needs the variables even to stop, so export them as
+in step 5 first:
+
+```bash
+docker compose -p guestbook-production down
+rm compose.yml .env.production
+# React + Hono: back to lesson 3.4's placeholder
+find /var/www/guestbook -mindepth 1 -delete
+echo "<h1>guestbook: production</h1>" > /var/www/guestbook/index.html
+```
+
+`down` removes the app container but not the data: the entries live in `guestbook_prod`
+(lesson 3.3's undo removes that). The images go with lesson 4.1's undo.

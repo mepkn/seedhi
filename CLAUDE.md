@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4) and 4.1. Code in Part 1 is imported from
+  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4) and Part 4 (4.1–4.2). Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -87,9 +87,20 @@ Done:
   "Repository source" before Part 5 pushes with `GITHUB_TOKEN`. zsh pitfall: `$IMAGE:tree-…`
   is the `:t` modifier; write `${IMAGE}:tree-${TREE}`.
 
+- Lesson 4.2 (session 6): written and verified. React track is **live in production** at
+  https://guestbook.pknspace.com (`guestbook-production-api-1`, `2a0fe02`, ~33 MB), frontend
+  rsynced to `/var/www/guestbook` (rsync `-a` made the folder 755 without setgid; harmless).
+  `/srv/guestbook/` has `compose.yml` (React's `server/compose.yml`) and `.env.production`
+  (600; `DATABASE_URL` + `LOG_LEVEL` only). The Next.js `server/compose.yml` was run on the
+  server once (healthy, ~69 MB) and taken down, before the profile change (its new version is
+  only checked with `compose config`). Two real entries in `guestbook_prod`. Found: with
+  `depends_on`, `up` recreates the app before `migrate` and a failing migration takes the site
+  down (prod was down ~1 min while testing); hence the `migrate` profile (PLAN.md).
+  Staging (`.env.staging`, port 3101) is not set up yet: Part 5.
+
 Next, in order:
-1. Part 4 (4.2 deploy production by hand, React track first), then
-   Parts 5–8, each verified on the real VPS before its lesson is written.
+1. Part 5 (5.1 branches & protection, 5.2 CI on PRs, 5.3 deploy staging, …), then
+   Parts 6–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
 

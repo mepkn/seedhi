@@ -63,7 +63,10 @@ FROM PUBLIC`), so staging can't connect to production. The container (`infra/com
 → `/srv/guestbook/postgres/compose.yml`, project `guestbook-postgres`, volume `guestbook-pgdata`)
 publishes no port; apps join the external `guestbook` network and use host `postgres`.
 Apps publish `127.0.0.1:3100` (production) and `127.0.0.1:3101` (staging), the same in both
-tracks. Each track's `server/guestbook.caddy` → `/etc/caddy/sites/guestbook.caddy` (both
+tracks. Each track's `server/compose.yml` → `/srv/guestbook/compose.yml`, one file for both
+environments: shell variables `APP_ENV`, `PORT`, `IMAGE`, `TAG` pick one, the project is
+`guestbook-<APP_ENV>`, runtime config comes from `.env.<APP_ENV>` and `APP_VERSION` is `TAG`.
+Each track's `server/guestbook.caddy` → `/etc/caddy/sites/guestbook.caddy` (both
 hostnames); the React track serves `/var/www/guestbook` and `/var/www/guestbook-staging`
 (owned by `deploy`) and proxies `/api/*`.
 
@@ -125,7 +128,10 @@ feature ──PR──► staging ──PR──► main
 | — | a broken migration | — | staging catches it; fix forward |
 
 Expand/contract is a concept page only. `drizzle-kit push` only for prototyping.
-Migrations run as a one-off container before the app starts. Roll forward, not back.
+Migrations run as a one-off container before the app starts. On the server the `migrate`
+service has `profiles: [migrate]` and the deploy is `pull && run --rm migrate && up -d --wait`;
+never `depends_on` there: on an update `up` replaces the app container before `migrate` runs,
+so a failed migration leaves the site down (tried in 4.2). Roll forward, not back.
 
 ## The VPS (1 vCPU · 1 GB · 10 GB)
 

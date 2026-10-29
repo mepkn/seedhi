@@ -1,0 +1,56 @@
+# The Next.js app on the server (lesson 4.2), copied to /srv/guestbook/compose.yml.
+# One file for both environments: the shell variables below pick which one,
+# and each runs as its own Compose project. The runtime config comes from
+# .env.<APP_ENV> next to this file (chmod 600, never committed).
+#   export APP_ENV=production PORT=3100 IMAGE=ghcr.io/<you>/seedhi-nextjs TAG=<sha>
+#   docker compose -p guestbook-$APP_ENV pull
+#   docker compose -p guestbook-$APP_ENV run --rm migrate
+#   docker compose -p guestbook-$APP_ENV up -d --wait
+# Staging is APP_ENV=staging PORT=3101. Postgres runs on its own
+# (/srv/guestbook/postgres, lesson 3.3); this joins its network.
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Shared by the migrate and app containers. The image tag is the commit SHA,
+# so it doubles as the version shown in the footer and the logs.
+x-app: &app
+  image: ${IMAGE:?set IMAGE}:${TAG:?set TAG}
+  env_file: .env.${APP_ENV:?set APP_ENV}
+  environment:
+    APP_ENV: ${APP_ENV}
+    APP_VERSION: ${TAG}
+  networks: [guestbook]
+  mem_limit: 256m
+  <<: *logging
+
+services:
+  # Runs the migrations and exits. Only `docker compose run` starts it (the
+  # profile keeps `up` away from it), so the running app is untouched until
+  # the migrations have succeeded. With depends_on, `up` would stop the old
+  # app first, and a failed migration would leave the site down.
+  migrate:
+    <<: *app
+    profiles: [migrate]
+    command: ["node", "src/db/migrate.ts"]
+
+  app:
+    <<: *app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PORT:?set PORT}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+
+networks:
+  guestbook:
+    external: true
