@@ -7,5 +7,6 @@ export const entries = pgTable("entries", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   name: varchar("name", { length: NAME_MAX }).notNull(),
   message: varchar("message", { length: MESSAGE_MAX }).notNull(),
+  country: varchar("country", { length: 2 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
