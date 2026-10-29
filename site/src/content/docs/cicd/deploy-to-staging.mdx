@@ -225,7 +225,12 @@ ok   GET /api/entries 200, has the new entry
 smoke test passed: https://guestbook-staging.<your-domain>
 ```
 
-Three images kept, not two: `2a0fe02` is production's, still running (lesson 4.2).
+Three images kept, not two: `2a0fe02` is production's, still running (lesson 4.2). The next
+merge removed the oldest staging image, `2e21293`, and still left production's alone:
+
+```
+kept: 3a3256f ac1292d 2a0fe02
+```
 
 Open `https://guestbook-staging.<your-domain>`: the smoke test's entry is there, and the
 footer shows `staging` and the commit, from the same `/api/health`. Production hasn't changed:
