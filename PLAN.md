@@ -117,7 +117,8 @@ feature ──PR──► staging ──PR──► main
   adds the check). Repository admin bypasses (`always`), so the owner can still push guide
   edits straight to `main` (then `git push origin main:staging` to keep `staging` level).
   Merge methods: squash or merge into `staging`, merge commit only into `main` (squashing
-  `staging` into `main` would break their shared history). Hotfix: branch from `main`, then
+  `staging` into `main` would break their shared history; the admin bypass still allows it,
+  so pick *Merge* by hand). Hotfix: branch from `main`, then
   merge `main` back into `staging`. Rollback: redeploy the previous image.
 - Builds only in CI, never on the VPS.
 

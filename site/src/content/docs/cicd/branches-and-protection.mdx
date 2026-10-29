@@ -67,7 +67,8 @@ GitHub can merge a pull request three ways. Two of them matter here:
 Never squash `staging` into `main`. The squashed commit is new, `staging` doesn't contain it,
 and the next pull request from `staging` shows every change since the start again, often with
 conflicts. The rules below allow only merge commits on `main`, so it can't happen by
-accident. `staging` allows both, because a hotfix brings `main` back into `staging` with a
+accident, except for you: the owner's bypass (step 4) covers the merge method too. `staging`
+allows both, because a hotfix brings `main` back into `staging` with a
 merge commit (5.6).
 
 ### 4. The rulesets
@@ -87,7 +88,9 @@ repository, one per branch:
 - **`allowed_merge_methods`**: `merge` only, step 3's rule.
 - **`bypass_actors`**: role `5` is *Repository admin*, the owner of a personal repository.
   `always` lets you push straight to the branch when you mean to (fixing a typo in a README),
-  and GitHub says so every time: `remote: Bypassed rule violations for refs/heads/main`. Use
+  and GitHub says so every time: `remote: Bypassed rule violations for refs/heads/main`. The
+  bypass covers every rule, the merge method included: on `main`'s pull requests, the merge
+  button still offers you *Squash*, so pick *Create a merge commit* yourself. Use
   `pull_request` instead to allow bypassing only on a pull request's merge button, or delete
   the block to apply the rules to everyone, you included.
 
@@ -188,8 +191,16 @@ git log --oneline --graph -4 origin/main
 ```
 
 `--delete-branch` removes the feature branch after the merge; `staging` is never deleted,
-the `deletion` rule makes sure of it. Trying `gh pr merge staging --squash` on the second pull
-request fails with `Squash merges are not allowed on this repository`… on `main` only.
+the `deletion` rule makes sure of it. The second merge is `--merge`: `--squash` would work
+too, because of your bypass, and leave `main` and `staging` with the same files but different
+commits. If that happens right after a promotion, nothing has changed on `staging` since, so
+point it at `main`'s commit (your bypass allows the force push):
+
+```bash
+git fetch
+git rev-parse origin/main^{tree} origin/staging^{tree}   # the same hash twice: same files
+git push --force-with-lease origin origin/main:refs/heads/staging
+```
 
 ## What you learned
 
