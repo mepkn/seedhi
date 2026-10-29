@@ -83,8 +83,9 @@ Done:
   public (user's decision), untagged leftovers deleted. `deploy` pulled both with no registry
   login (`x64`; 280/304 MB on disk); both images are still on the server for 4.2. The `gh`
   token now has `write:packages`, `delete:packages`; Docker is logged in to ghcr.io on the Mac.
-  The packages API shows `repository: null`, so the repo link is unconfirmed: check
-  "Repository source" before Part 5 pushes with `GITHUB_TOKEN`. zsh pitfall: `$IMAGE:tree-…`
+  Both packages are linked to `mepkn/seedhi` (confirmed in the GitHub UI: "Published … in
+  mepkn/seedhi"), although the packages REST API still returns `repository: null`; trust
+  the UI. In 5.3, check Package settings → Manage Actions access gives `seedhi` Write. zsh pitfall: `$IMAGE:tree-…`
   is the `:t` modifier; write `${IMAGE}:tree-${TREE}`.
 
 - Lesson 4.2 (session 6): written and verified. React track is **live in production** at
