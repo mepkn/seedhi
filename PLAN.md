@@ -104,6 +104,11 @@ feature ──PR──► staging ──PR──► main
 
 - PRs run checks only: lint, typecheck, migrations on an empty Postgres, schema-drift check
   (`drizzle-kit generate` must produce nothing), Docker build, smoke test in the runner.
+  `ci.yml` jobs (the required check names): `checks` (`scripts/check.sh` + drift),
+  `smoke (react-hono-postgres)`, `smoke (nextjs-fullstack-postgres)` (each track's
+  `compose.yml` on an empty volume, then `scripts/smoke-test.sh http://localhost:8080`).
+  `scripts/smoke-test.sh <url>` is the one smoke test for CI, staging and production;
+  `READ_ONLY=1` skips the POST (production).
 - Merge to `staging`: build images, push to GHCR, write `.env.staging`, migrate, deploy, smoke test.
 - Merge to `main` (= QA approval): back up prod, migrate, deploy, smoke test.
 - Images are tagged with the tree hash (`git rev-parse HEAD^{tree}`) and the commit SHA, so

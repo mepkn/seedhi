@@ -93,6 +93,8 @@ repository, one per branch:
   button still offers you *Squash*, so pick *Create a merge commit* yourself. Use
   `pull_request` instead to allow bypassing only on a pull request's merge button, or delete
   the block to apply the rules to everyone, you included.
+- **`required_status_checks`**, the last block, is lesson 5.2's: CI must pass. Leave it out
+  for now; GitHub would wait for checks that don't exist yet.
 
 `staging.json` is the same with `refs/heads/staging` and both merge methods:
 
