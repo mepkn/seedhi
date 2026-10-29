@@ -6,18 +6,219 @@ sidebar:
   order: 3
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import compose from '../../../../../infra/compose/postgres.yml?raw'
+
 ## Goal
 
-One tuned Postgres container with a staging and a production database on a volume.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+One tuned Postgres container with a staging and a production database on a volume, reachable
+by the apps and by nobody outside the server. Each environment gets its own database **and
+its own login**, so staging can't touch production data, even by mistake.
 
 ## Steps
 
+### 1. One container, two databases
+
+Staging and production could each have their own Postgres container. On 1 GB that is a
+second ~45 MB process and a second cache for little gain, so this guide runs one container
+with two databases. The price: they share CPU, memory and a restart. Upgrading Postgres or
+restarting it touches both environments at once, which is acceptable for a guestbook and a
+choice to revisit for anything bigger.
+
+### 2. The compose file
+
+<Code code={compose} lang="yaml" title="infra/compose/postgres.yml" />
+
+What differs from the development database (lesson 1.2):
+
+- **No `ports:`.** Nothing on the server listens on 5432, so the database can't be reached
+  from outside, whatever the firewall says. The apps join the `guestbook` network and reach it
+  by its service name, `postgres`.
+- **Named volume and network.** `name: guestbook-pgdata` and `name: guestbook` fix the names,
+  so the app projects in Part 4 can refer to the network as `external`, and `docker volume ls`
+  shows a name you recognise.
+- **Tuned for 1 GB.** `shared_buffers` is Postgres's own cache (default 128 MB, here 64 MB;
+  the kernel's file cache does the rest). `max_connections=20` keeps the per-connection memory
+  bounded: two apps with a pool of 5 each, plus migrations and you with `psql`, fit.
+  `effective_cache_size` doesn't allocate anything; it tells the planner how much cache to
+  expect.
+- **`restart: unless-stopped`** brings it back after a crash or a server reboot.
+- **`stop_grace_period: 1m`.** On `docker compose down`, Docker waits 10 seconds by default
+  and then kills the process. A minute lets Postgres finish writing and shut down cleanly.
+- **`mem_limit` and the log cap** from lesson 3.2.
+
+### 3. Put it on the server
+
+On your computer, from the repo:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip> 'install -d -m 750 /srv/guestbook/postgres'
+scp -i ~/.ssh/seedhi_deploy infra/compose/postgres.yml \
+  deploy@<server-ip>:/srv/guestbook/postgres/compose.yml
+```
+
+Then log in as `deploy` and give the superuser a random password:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip>
+cd /srv/guestbook/postgres
+umask 077
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+docker compose up -d --wait
+```
+
+```
+ Container guestbook-postgres Started
+ Container guestbook-postgres Waiting
+ Container guestbook-postgres Healthy
+```
+
+You never type the superuser password: `docker compose exec postgres psql -U postgres` connects
+over the container's local socket, which the image trusts. The password guards connections
+over the network, and the `postgres` image refuses to start without one.
+
+### 4. A login and a database per environment
+
+Still in `/srv/guestbook/postgres`, generate two more passwords into a file only `deploy` can
+read, then create the roles and databases:
+
+```bash
+umask 077
+cat > db-passwords <<EOF
+STAGING_DB_PASSWORD=$(openssl rand -hex 24)
+PROD_DB_PASSWORD=$(openssl rand -hex 24)
+EOF
+. ./db-passwords
+
+docker compose exec -T postgres psql -U postgres -v ON_ERROR_STOP=1 <<EOF
+CREATE ROLE guestbook_staging LOGIN PASSWORD '$STAGING_DB_PASSWORD';
+CREATE DATABASE guestbook_staging OWNER guestbook_staging;
+REVOKE ALL ON DATABASE guestbook_staging FROM PUBLIC;
+CREATE ROLE guestbook_prod LOGIN PASSWORD '$PROD_DB_PASSWORD';
+CREATE DATABASE guestbook_prod OWNER guestbook_prod;
+REVOKE ALL ON DATABASE guestbook_prod FROM PUBLIC;
+EOF
+```
+
+```
+CREATE ROLE
+CREATE DATABASE
+REVOKE
+CREATE ROLE
+CREATE DATABASE
+REVOKE
+```
+
+- Each role **owns** its database, so the app (and its migrations) can create tables there.
+- By default every role may connect to every database. `REVOKE ALL … FROM PUBLIC` removes that,
+  so only the owner gets in.
+- `openssl rand -hex 24` gives 48 letters and digits: no `@`, `/` or `:` that would have to be
+  escaped in a `DATABASE_URL`.
+- The heredoc has no quotes around `EOF`, so the shell fills in the passwords; they never show
+  on screen or in your shell history.
+
+The apps will connect with:
+
+```
+postgres://guestbook_staging:<STAGING_DB_PASSWORD>@postgres:5432/guestbook_staging
+postgres://guestbook_prod:<PROD_DB_PASSWORD>@postgres:5432/guestbook_prod
+```
+
+Copy both passwords into your password manager (`cat db-passwords`). Part 4 puts the
+production one in `.env.production`, Part 5 moves both into GitHub secrets, and after that
+you can delete the file.
+
 ## Verify
+
+As `deploy`, in `/srv/guestbook/postgres`. The settings took effect:
+
+```bash
+docker compose exec postgres psql -U postgres \
+  -c "SHOW shared_buffers" -c "SHOW max_connections" -c "\l guestbook*"
+```
+
+```
+ shared_buffers
+----------------
+ 64MB
+
+ max_connections
+-----------------
+ 20
+
+       Name        |       Owner       | … |            Access privileges
+-------------------+-------------------+---+-----------------------------------------
+ guestbook_prod    | guestbook_prod    | … | guestbook_prod=CTc/guestbook_prod
+ guestbook_staging | guestbook_staging | … | guestbook_staging=CTc/guestbook_staging
+```
+
+`CTc` means create, temporary tables and connect, for the owner only.
+
+Connect the way an app will, from another container on the `guestbook` network. Staging gets
+into its own database, not production's:
+
+```bash
+. ./db-passwords
+docker run --rm --network guestbook postgres:18-alpine psql \
+  "postgres://guestbook_staging:$STAGING_DB_PASSWORD@postgres:5432/guestbook_staging" \
+  -c "select current_user, current_database()"
+docker run --rm --network guestbook postgres:18-alpine psql \
+  "postgres://guestbook_staging:$STAGING_DB_PASSWORD@postgres:5432/guestbook_prod" -c "select 1"
+```
+
+```
+   current_user    | current_database
+-------------------+-------------------
+ guestbook_staging | guestbook_staging
+
+psql: error: connection to server at "postgres" (172.24.0.2), port 5432 failed: FATAL:  permission denied for database "guestbook_prod"
+DETAIL:  User does not have CONNECT privilege.
+```
+
+Nothing is reachable from the server's network:
+
+```bash
+ss -tln | grep 5432 || echo "nothing listens on 5432"
+```
+
+```
+nothing listens on 5432
+```
+
+And the memory, against lesson 3.2's budget:
+
+```bash
+docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" guestbook-postgres
+```
+
+```
+NAME                 MEM USAGE / LIMIT
+guestbook-postgres   103MiB / 160MiB
+```
+
+That looks like more than the ~30 MB of lesson 2.2, but most of it is the kernel's file cache
+of the database files `CREATE DATABASE` just wrote. The container's
+`/sys/fs/cgroup/memory.stat` splits it up: about 5 MB of process memory, 31 MB of shared
+buffers, 7 MB of kernel memory and 60 MB of file cache. The kernel drops that cache first
+when the container nears its limit, so it counts towards `LIMIT` without ever causing an OOM
+kill.
 
 ## What you learned
 
+A database on a server publishes no port: apps reach it over a Docker network by name. One
+Postgres can hold several environments safely when each has its own login and `REVOKE … FROM
+PUBLIC` keeps them apart. Postgres's memory is mostly settings you choose (`shared_buffers`,
+`max_connections`) plus file cache the kernel gives back.
+
 ## Undo
+
+As `deploy`:
+
+```bash
+cd /srv/guestbook/postgres && docker compose down -v
+cd ~ && rm -rf /srv/guestbook/postgres
+docker rmi postgres:18-alpine
+```
+
+`down -v` deletes the `guestbook-pgdata` volume, and every entry with it; lesson 6.5's backups
+are the way back. Compose removes the `guestbook` network too, once no other container uses it.

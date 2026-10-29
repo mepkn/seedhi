@@ -58,6 +58,10 @@ B (Next.js static export) and C (Next.js SSR + separate API) are a short "Variat
 | production | VPS | Deployed on merge to `main` | `guestbook_prod` | `guestbook.pknspace.com` |
 
 One Postgres container on the VPS holds both databases (a deliberate trade-off for 1 GB).
+Each database has its own owner role (`guestbook_staging`, `guestbook_prod`, `REVOKE ALL …
+FROM PUBLIC`), so staging can't connect to production. The container (`infra/compose/postgres.yml`
+→ `/srv/guestbook/postgres/compose.yml`, project `guestbook-postgres`, volume `guestbook-pgdata`)
+publishes no port; apps join the external `guestbook` network and use host `postgres`.
 
 **Low-memory mode** (for this 1 GB VPS; optional in the guide, lesson 5.7): repo variable
 `LOW_MEMORY=true` stops staging after a successful production deploy; manual

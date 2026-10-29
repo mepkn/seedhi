@@ -1,0 +1,55 @@
+# Postgres on the server (lesson 3.3): one container holding the staging and
+# production databases. Copied to /srv/guestbook/postgres/compose.yml; the
+# superuser password is in .env next to it (chmod 600, never committed).
+#   docker compose up -d --wait
+# No port is published: the apps reach it as `postgres` on the `guestbook`
+# network, and you reach it with `docker compose exec postgres psql -U postgres`.
+name: guestbook-postgres
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: guestbook-postgres
+    restart: unless-stopped
+    env_file: .env
+    # Sized for a 1 GB server: a small shared cache and few connections
+    # (each app's pool has max 5).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=4MB
+      - -c
+      - effective_cache_size=256MB
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks: [guestbook]
+    mem_limit: 160m
+    # Give Postgres time to shut down cleanly instead of being killed after 10 s.
+    stop_grace_period: 1m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+      start_interval: 2s
+    <<: *logging
+
+volumes:
+  pgdata:
+    name: guestbook-pgdata
+
+networks:
+  guestbook:
+    name: guestbook
