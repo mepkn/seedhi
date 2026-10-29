@@ -111,7 +111,8 @@ not against losing the server: lesson 6.5 copies nightly backups off the server.
 
 <Code code={workflow} lang="yaml" title=".github/workflows/deploy-production.yml" />
 
-Most of it is lesson 5.3's workflow. The differences:
+Most of it is lesson 5.3's workflow. The `version` input and the steps that check it are lesson
+5.5's (rollback); leave them out for now. The differences:
 
 - **`on: push: branches: [main]`** with **`paths-ignore`**: a push that only changes the
   guide (`site/`) or Markdown files doesn't deploy. There's nothing new to run.
