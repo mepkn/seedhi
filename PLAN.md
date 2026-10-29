@@ -139,7 +139,11 @@ feature ──PR──► staging ──PR──► main
   Merge methods: squash or merge into `staging`, merge commit only into `main` (squashing
   `staging` into `main` would break their shared history; the admin bypass still allows it,
   so pick *Merge* by hand). Hotfix: branch from `main`, then
-  merge `main` back into `staging`. Rollback: redeploy the previous image.
+  merge `main` back into `staging`. Rollback: redeploy the previous image: `deploy-production.yml`
+  run by hand with `version=<commit of main>` (first-parent only), which checks out that commit
+  (keeping `main`'s `scripts/`) and deploys `IMAGE:<version>`, the exact image that ran
+  (not the tree tag: staging may have rebuilt the same tree with a new digest, e.g. after a
+  revert). Then fix forward with a revert through `staging`.
 - Builds only in CI, never on the VPS.
 
 ## Database and migrations (Drizzle Kit)

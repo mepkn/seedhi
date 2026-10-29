@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1–5.4. Code in Part 1 is imported from
+  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1–5.5. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -124,9 +124,13 @@ Done:
   Stray `retag-test` tag on the GHCR version of `ac1292d` (from testing; can't untag alone,
   goes with teardown). Pushes to `main` touching only `site/` or `.md` don't deploy production
   (PR #16 confirmed).
+- Lesson 5.5 (session 7): written and verified with a real bug (#19, entries oldest first,
+  reverted in #21) promoted to production, rolled back (`96dbbb8`, exact image `f3c1d7473e43`,
+  ~1 min), refusals tested, then forward. Found: a revert gives the same tree, staging rebuilds
+  it with a new digest, so rollbacks use `IMAGE:<sha>`. Production on `ffa4c21`.
 
 Next, in order:
-1. Part 5 (5.5 rollback, 5.6 hotfixes, 5.7 low-memory mode), then
+1. Part 5 (5.6 hotfixes, 5.7 low-memory mode), then
    Parts 6–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
