@@ -8,7 +8,7 @@ repo `mepkn/seedhi` (public).
 branches and CI/CD, migrations, VPS memory budget, monitoring tools, alerts, the lesson list and
 names. Don't re-decide what it settles; if something must change, update PLAN.md too.
 
-## Status (2026-10-29, session 6)
+## Status (2026-10-29, session 7)
 
 Done:
 - `examples/react-hono-postgres/`: backend (Hono, Drizzle, Zod, pino, request IDs, rate limit,
@@ -100,8 +100,18 @@ Done:
   down (prod was down ~1 min while testing); hence the `migrate` profile (PLAN.md).
   Staging (`.env.staging`, port 3101) is not set up yet: Part 5.
 
+- Lesson 5.1 (session 7, 2026-10-29): written and verified. Branch `staging` exists; rulesets
+  `main` (id 26149345, merge commits only) and `staging` (id 26149347, squash or merge), from
+  `infra/github/rulesets/*.json`: PR required (0 approvals), no deletion, no force push; admin
+  bypass `always` (user's decision). The bypass also allows squash on `main` (PR #2 was squashed
+  by accident; fixed by force-pushing `staging` to `main`'s commit, same tree): always
+  `gh pr merge staging --merge`. Guide/PLAN edits: either PR flow (feature → staging squash →
+  staging → main merge) or a direct push to `main`, then `git push origin main:staging`
+  (fast-forward) so the branches stay level. Merging into `main` may need the user's permission.
+  5.2 must add the CI check to both rulesets (JSON files + `gh api -X PUT`).
+
 Next, in order:
-1. Part 5 (5.1 branches & protection, 5.2 CI on PRs, 5.3 deploy staging, …), then
+1. Part 5 (5.2 CI on PRs, 5.3 deploy staging, …), then
    Parts 6–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
