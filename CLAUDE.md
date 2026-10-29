@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks) and Part 2 (2.1–2.3) and 3.1. Code in Part 1 is imported from
+  (1.1–1.9, both tracks) and Part 2 (2.1–2.3), 3.1 and 3.2. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -56,13 +56,15 @@ Done:
   `~/.ssh/seedhi_deploy` on the Mac (no passphrase), `/srv/guestbook` is `deploy:deploy 750`.
   `pkn`'s sudo needs a password: put sudo steps in a script in `~` and ask the user to run
   `ssh -t -p 20044 pkn@37.187.139.100 'sudo sh ~/<script>'`, then delete it.
+- Lesson 3.2 (session 5): swap in tabs (lxc: host swap, nothing to do; kvm: swapfile steps,
+  marked as not run). Log caps per service in compose, no `daemon.json` (user's decision: no
+  Docker restart on the shared server). Verified as `deploy` with a throwaway
+  `~/limits-test` (alpine:3.22 `hog` OOM-killed, exit 137; `chatty` logs stay capped); test
+  folder and image removed afterwards. Limits in PLAN.md (VPS section); every compose file on
+  the server must use the `x-logging` anchor and `mem_limit`.
 
 Next, in order:
-1. Lesson 3.2: on `lxc` a swapfile isn't possible (512 MB host-provided swap already exists),
-   so 3.2 covers both cases; still to do there: `/etc/docker/daemon.json` log rotation
-   (needs sudo + docker restart, which restarts all 8 containers: ask first), `mem_limit`,
-   `docker stats`.
-2. Then 3.3, 3.4 (deploy will need write access to `/var/www/guestbook` for the React track),
+1. Lesson 3.3, then 3.4 (deploy will need write access to `/var/www/guestbook` for the React track),
    and Parts 4–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).

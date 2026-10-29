@@ -1,23 +1,260 @@
 ---
 title: "Make 1 GB enough"
-description: "Add swap, Docker log rotation and memory limits, and learn to read docker stats."
+description: "Read the server's memory, make sure there is swap, and cap every container's memory and logs."
 sidebar:
   label: "3.2 Make 1 GB enough"
   order: 2
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components'
+
 ## Goal
 
-Add swap, Docker log rotation and memory limits, and learn to read docker stats.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Read the server's memory, make sure there is swap, and learn the two lines every container in
+this guide gets: a **memory limit** and a **log cap**. You try both on a throwaway container
+and watch Docker kill one that asks for too much.
 
 ## Steps
 
+### 1. Read `free -m`
+
+```bash
+free -m
+```
+
+```
+               total        used        free      shared  buff/cache   available
+Mem:            1024         336          40          15         662         687
+Swap:            512          26         485
+```
+
+Ignore `free`: Linux uses spare memory as a disk cache (`buff/cache`) and gives it back when a
+program needs it. The number that matters is **`available`**: what programs can still get
+without swapping. Here the existing apps use about 340 MB, which leaves about 680 MB for the
+guestbook.
+
+### 2. Budget the memory
+
+Every container gets a `mem_limit`: the most it may use. The numbers below come from
+measuring idle containers (lesson 2.2) and leaving room for load.
+
+| Container | Uses (idle) | `mem_limit` |
+|---|---|---|
+| Postgres (both databases, lesson 3.3) | ~30 MB | `160m` |
+| API (React + Hono), per environment | ~30 MB | `128m` |
+| Next.js, per environment | ~60 MB | `256m` |
+| Fluent Bit (lesson 6.3) | ~25 MB | `64m` |
+
+Add the limits up for the worst case, production only:
+
+- React + Hono: 340 + 160 + 128 + 64 = **692 MB**
+- Next.js: 340 + 160 + 256 + 64 = **820 MB**
+
+Both fit in 1024 MB. Add staging and Next.js comes to 1076 MB: more than the server has. In
+practice the apps stay far below their limits, and swap covers a spike, but this is why
+lesson 5.7 can stop staging after each production deploy.
+
+A limit is a ceiling, not a reservation: a container under its limit leaves the rest free for
+others. What a limit buys you is that **one** container that leaks or gets a burst of traffic
+is killed and restarted on its own, instead of the kernel picking a victim from everything on
+the server, maybe your database or `sshd`.
+
+### 3. Make sure there is swap
+
+Swap is disk space the kernel uses when memory runs out. It is slow, but it turns "out of
+memory, kill something" into "a bit slow for a moment".
+
+```bash
+swapon --show
+systemd-detect-virt
+```
+
+<Tabs>
+  <TabItem label="Container VPS (lxc, openvz)">
+
+```
+NAME TYPE    SIZE  USED PRIO
+none virtual 512M 26M    0
+lxc
+```
+
+This is this guide's server. The provider's host decides the swap (`virtual`, no file you
+can see), and the server can't add its own: `swapon` is refused inside a container. If you
+see a `Swap:` line above zero, you are done. If there is none, you can't add any; the memory
+limits matter even more, and Next.js without staging is the safe choice.
+
+  </TabItem>
+  <TabItem label="Full VM (kvm)">
+
+If `swapon --show` prints nothing, add a 1 GB swapfile:
+
+```bash
+sudo fallocate -l 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-seedhi.conf
+sudo sysctl --system
+```
+
+The `fstab` line turns it on again after a reboot. `swappiness=10` tells the kernel to swap
+only when memory is really short, rather than moving idle pages out early.
+
+These steps are standard but were **not** run for this guide: its server is a container.
+
+  </TabItem>
+</Tabs>
+
+### 4. Cap the logs
+
+Docker saves everything a container prints to a JSON file on the server, and by default that
+file grows forever. A container stuck in a crash loop, or a log level left on `debug`, can fill
+a 10 GB disk. The fix is two options on every service:
+
+```yaml
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  api:
+    image: …
+    mem_limit: 128m
+    <<: *logging
+```
+
+`max-size: 10m` starts a new file at 10 MB, and `max-file: 3` keeps three, so each container
+uses at most 30 MB of logs. `x-logging` is a YAML anchor: any top-level key that starts with
+`x-` is ignored by Compose, and `<<: *logging` pastes it into each service, so the setting is
+written once.
+
+:::note[Why not `/etc/docker/daemon.json`?]
+Docker can set the same default for the whole server in `/etc/docker/daemon.json`. That needs
+`sudo` and a Docker restart, which stops every container on the server, and it only applies to
+containers created afterwards. This guide shares the server with other apps, so it sets the
+cap per service instead: nothing outside `/srv/guestbook` changes, and nothing needs undoing.
+On a server that is only yours, setting both is fine.
+:::
+
+### 5. Try it on a throwaway container
+
+As `deploy` (lesson 3.1), make a test project:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip>
+mkdir ~/limits-test && cd ~/limits-test
+cat > compose.yml <<'EOF'
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "1m"
+      max-file: "2"
+
+services:
+  hog:
+    image: alpine:3.22
+    command: tail /dev/zero
+    mem_limit: 32m
+    memswap_limit: 32m
+    <<: *logging
+  chatty:
+    image: alpine:3.22
+    command: sh -c "while true; do echo a log line that repeats until the file is full; done"
+    mem_limit: 16m
+    cpus: 0.2
+    <<: *logging
+EOF
+docker compose up -d
+```
+
+- `hog` reads `/dev/zero` looking for a line ending that never comes, holding everything in
+  memory. `memswap_limit` equal to `mem_limit` means no swap for it, so it hits the wall fast.
+  (With only `mem_limit`, Docker lets a container swap as much again; the guestbook keeps that
+  default.)
+- `chatty` prints as fast as it can; `cpus: 0.2` keeps it from taking the one core from the
+  other apps, and the log cap is small (2 × 1 MB) so you see it work in a minute.
+
 ## Verify
+
+After about 20 seconds:
+
+```bash
+docker compose ps -a --format "table {{.Service}}\t{{.Status}}"
+docker inspect limits-test-hog-1 --format "OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}}"
+```
+
+```
+SERVICE   STATUS
+chatty    Up 21 seconds
+hog       Exited (137) 19 seconds ago
+OOMKilled=true ExitCode=137
+```
+
+Exit code 137 is 128 + 9: the process got signal 9 (`SIGKILL`), and `OOMKilled=true` says the
+kernel sent it because the container went over its limit. Only `hog` died; nothing else on the
+server noticed. Remember 137: when a real container restarts over and over, check
+`OOMKilled` first. Lesson 6.6 alerts on it.
+
+```bash
+docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}"
+```
+
+```
+NAME                   MEM USAGE / LIMIT   CPU %
+limits-test-chatty-1   1.039MiB / 16MiB    20.26%
+…
+```
+
+This is the command for "is the server OK right now?". `LIMIT` is the container's
+`mem_limit`; a container without one shows the whole server's memory. `CPU %` is of one core,
+so `chatty` sits at its `cpus: 0.2`. Without `--no-stream` it updates live.
+
+Now the log cap. Check the size of `chatty`'s logs three times, 30 seconds apart:
+
+```bash
+docker inspect limits-test-chatty-1 --format "{{json .HostConfig.LogConfig}}"
+for i in 1 2 3; do sleep 30; docker compose logs --no-log-prefix chatty | wc -c; done
+```
+
+```
+{"Type":"json-file","Config":{"max-file":"2","max-size":"1m"}}
+552767
+653441
+540500
+```
+
+It prints thousands of lines a second, yet the size stays put: when the current file reaches
+1 MB, Docker starts a new one and deletes the oldest. `docker logs` prints the text without
+its JSON wrapping, so you see about 0.5–0.9 MB of the 2 MB on disk.
 
 ## What you learned
 
+On a small server, memory is a budget you write down: measure, set a ceiling per container,
+add the ceilings up. A container over its limit is killed alone (exit 137, `OOMKilled`), not
+the server. Logs are capped per service so the disk can't fill up, and `free -m` (read
+`available`) and `docker stats` tell you where you stand.
+
 ## Undo
+
+The test project and its image:
+
+```bash
+docker compose down
+docker rmi alpine:3.22
+cd ~ && rm -rf ~/limits-test
+```
+
+The limits and log caps live in the compose files of later lessons and go away with them.
+
+On a full VM, if you added a swapfile:
+
+```bash
+sudo swapoff /swapfile && sudo rm /swapfile
+sudo sed -i '\|^/swapfile |d' /etc/fstab
+sudo rm /etc/sysctl.d/99-seedhi.conf && sudo sysctl --system
+```

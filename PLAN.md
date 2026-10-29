@@ -117,9 +117,17 @@ Migrations run as a one-off container before the app starts. Roll forward, not b
 
 ## The VPS (1 vCPU · 1 GB · 10 GB)
 
-Existing: Cloudflare Tunnel → system Caddy :8080, Docker, Dockhand. The guide adds swap,
-Docker log rotation, `mem_limit` on every container, a tuned Postgres
-(`shared_buffers=64MB`, `max_connections=20`), image pruning (keep the last 2) and a `deploy` user.
+Existing: Cloudflare Tunnel → system Caddy :8080, Docker, Dockhand. The guide adds swap
+(only on a full VM; this server is `lxc` and gets 512 MB from the host), a log cap and
+`mem_limit` on every container, a tuned Postgres (`shared_buffers=64MB`,
+`max_connections=20`), image pruning (keep the last 2) and a `deploy` user.
+
+Log caps are set per service in compose (`x-logging` anchor: `json-file`, `max-size: 10m`,
+`max-file: 3`), not in `/etc/docker/daemon.json`: that needs a Docker restart, which stops the
+server's other apps, applies only to new containers and would need its own undo.
+
+`mem_limit`: Postgres `160m`, API `128m`, Next.js `256m`, Fluent Bit `64m` (worst case with
+production only: React 692 MB, Next.js 820 MB, on a ~340 MB base).
 
 RAM, steady state (approx.):
 
