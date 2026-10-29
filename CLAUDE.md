@@ -8,14 +8,14 @@ repo `mepkn/seedhi` (public).
 branches and CI/CD, migrations, VPS memory budget, monitoring tools, alerts, the lesson list and
 names. Don't re-decide what it settles; if something must change, update PLAN.md too.
 
-## Status (2026-10-29, session 5)
+## Status (2026-10-29, session 6)
 
 Done:
 - `examples/react-hono-postgres/`: backend (Hono, Drizzle, Zod, pino, request IDs, rate limit,
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks) and Part 2 (2.1–2.3) and Part 3 (3.1–3.4). Code in Part 1 is imported from
+  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4) and 4.1. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -77,8 +77,18 @@ Done:
   `X-Forwarded-For` is `::1`; real IP only in `CF-Connecting-IP`. Shiki has no `caddy`
   language: use `lang="txt"`.
 
+- Lesson 4.1 (session 6, 2026-10-29): written and verified. Both images built on the Mac for
+  `linux/amd64` (`--provenance=false`, source label) and pushed as
+  `ghcr.io/mepkn/seedhi-{react-api,nextjs}:2a0fe02` and `:tree-804e909`; both packages are
+  public (user's decision), untagged leftovers deleted. `deploy` pulled both with no registry
+  login (`x64`; 280/304 MB on disk); both images are still on the server for 4.2. The `gh`
+  token now has `write:packages`, `delete:packages`; Docker is logged in to ghcr.io on the Mac.
+  The packages API shows `repository: null`, so the repo link is unconfirmed: check
+  "Repository source" before Part 5 pushes with `GITHUB_TOKEN`. zsh pitfall: `$IMAGE:tree-…`
+  is the `:t` modifier; write `${IMAGE}:tree-${TREE}`.
+
 Next, in order:
-1. Part 4 (4.1 push images to GHCR, 4.2 deploy production by hand, React track first), then
+1. Part 4 (4.2 deploy production by hand, React track first), then
    Parts 5–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).

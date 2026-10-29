@@ -6,18 +6,227 @@ sidebar:
   order: 1
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components'
+
 ## Goal
 
-Tag images with the commit and push them to the GitHub Container Registry.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Build the production image for the server's CPU, tag it with the commit it was built from and
+push it to the GitHub Container Registry (GHCR), so the server can pull it. The server never
+builds anything: on 1 GB, `next build` alone could run it out of memory, and a build there
+would not be the image you tested.
 
 ## Steps
 
+### 1. Where images live
+
+```
+your Mac (Part 4) ──docker push──► ghcr.io/<your-github-user>/seedhi-… ──docker pull──► VPS
+CI (Part 5)       ──────┘
+```
+
+A registry is a server for images. GHCR comes with your GitHub account, is free for public
+images and lives next to the code, so CI can push to it later with the token every workflow
+already has. Images are named `ghcr.io/<owner>/<name>`:
+
+| Track | Image |
+|---|---|
+| React + Hono | `ghcr.io/<your-github-user>/seedhi-react-api` (the API; the frontend is static files, lesson 4.2) |
+| Next.js | `ghcr.io/<your-github-user>/seedhi-nextjs` |
+
+### 2. Tag with the commit, not `latest`
+
+A tag is a name pointing at one image. `latest` points at whatever was pushed last, so
+"production runs `latest`" says nothing about which code runs, and rolling back has nothing to
+roll back to. This guide gives every image two tags:
+
+- **The commit SHA** (`git rev-parse --short HEAD`, e.g. `2a0fe02`): which commit this is. It
+  also becomes `APP_VERSION`, so the footer, the logs and Sentry show it.
+- **The tree hash** (`git rev-parse --short 'HEAD^{tree}'`, e.g. `tree-804e909`): a hash of the
+  files only, without the commit's author, date or parents. Merging `staging` into `main` makes
+  a new commit with the same files, so the same tree hash: Part 5 uses it to find the image QA
+  already tested on staging, instead of building it again.
+
+Both tags only mean something if the image holds exactly the committed files. Check that first:
+
+```bash
+git status --porcelain    # must print nothing; commit or stash first
+```
+
+### 3. Log in to GHCR
+
+Pushing needs a GitHub token with the `write:packages` scope. With the GitHub CLI:
+
+```bash
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io -u <your-github-user> --password-stdin
+```
+
+```
+Login Succeeded
+```
+
+`--password-stdin` keeps the token out of your shell history and the process list. Docker
+keeps the login in your keychain (or in `~/.docker/config.json`) until `docker logout ghcr.io`.
+
+Without the CLI: GitHub → Settings → Developer settings → Personal access tokens → Tokens
+(classic), scope `write:packages`, and paste it into `docker login ghcr.io -u <your-github-user>`.
+
+### 4. Build for the server's CPU
+
+Check the server's architecture once:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip> uname -m
+```
+
+```
+x86_64
+```
+
+A Mac with Apple silicon builds `arm64` images by default. The server would refuse them with
+`exec format error`, so build for `linux/amd64` explicitly (Docker emulates the other CPU,
+which makes the build slower but not different). From the repo root:
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+OWNER=<your-github-user>
+IMAGE=ghcr.io/$OWNER/seedhi-react-api
+SHA=$(git rev-parse --short HEAD)
+TREE=$(git rev-parse --short 'HEAD^{tree}')
+
+docker build --platform linux/amd64 --provenance=false \
+  --label org.opencontainers.image.source=https://github.com/$OWNER/seedhi \
+  -t ${IMAGE}:${SHA} -t ${IMAGE}:tree-${TREE} \
+  examples/react-hono-postgres/backend
+```
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+OWNER=<your-github-user>
+IMAGE=ghcr.io/$OWNER/seedhi-nextjs
+SHA=$(git rev-parse --short HEAD)
+TREE=$(git rev-parse --short 'HEAD^{tree}')
+
+docker build --platform linux/amd64 --provenance=false \
+  --label org.opencontainers.image.source=https://github.com/$OWNER/seedhi \
+  -t ${IMAGE}:${SHA} -t ${IMAGE}:tree-${TREE} \
+  examples/nextjs-fullstack-postgres
+```
+
+</TabItem>
+</Tabs>
+
+- **The label** links the package to your repo on GitHub, so it shows on the repo page and,
+  in Part 5, a workflow in that repo may push to it.
+- **`--provenance=false`.** By default BuildKit adds a provenance attestation, which turns the
+  push into an index of two manifests (the image and an `unknown/unknown` entry). GHCR then
+  doesn't see the label, and the package page lists the extra entry as a second platform. One
+  image, one manifest.
+- **`${IMAGE}` in braces.** In zsh, `$IMAGE:t…` is a modifier (`:t` takes the last path
+  part), so `$IMAGE:tree-$TREE` silently becomes a different, wrong name. The braces make it
+  plain text in every shell.
+
+### 5. Push
+
+```bash
+docker push ${IMAGE}:${SHA}
+docker push ${IMAGE}:tree-${TREE}
+```
+
+```
+2a0fe02: digest: sha256:9bfefcf77e4f05efb163aa2bf65d3c9a8d29ca188ecb6b71667b4ce4da8e9388 size: 1998
+tree-804e909: digest: sha256:9bfefcf77e4f05efb163aa2bf65d3c9a8d29ca188ecb6b71667b4ce4da8e9388 size: 1998
+```
+
+Same digest twice: two names, one image. The second push sends no layers.
+
+### 6. Make the package public
+
+A package pushed from your computer starts **private**. The images hold no secrets (lesson 2.3
+checked), so this guide makes them public, and the server pulls them without a token. On
+GitHub: your profile → Packages → the package → Package settings → Danger zone → Change
+visibility → Public. Make sure "Repository source" on that page names your repo; if not,
+"Connect repository" sets it.
+
+:::note[Keeping images private]
+For private images the server must log in too: create a classic token with only
+`read:packages`, run `docker login ghcr.io` as `deploy` with it, and remember the token in
+lesson 8.1's teardown (`docker logout ghcr.io`) and in your token list.
+:::
+
 ## Verify
+
+The registry has one `linux/amd64` image per tag, with the label:
+
+```bash
+docker buildx imagetools inspect ${IMAGE}:${SHA} \
+  --format '{{.Manifest.MediaType}} {{json .Image.Platform}} {{index .Image.Config.Labels "org.opencontainers.image.source"}}'
+```
+
+```
+application/vnd.oci.image.manifest.v1+json {
+  "architecture": "amd64",
+  "os": "linux"
+} https://github.com/<your-github-user>/seedhi
+```
+
+The server can pull it without logging in, and it runs on the server's CPU. As `deploy` on the
+server:
+
+```bash
+docker pull ghcr.io/<your-github-user>/seedhi-react-api:<sha>
+docker run --rm ghcr.io/<your-github-user>/seedhi-react-api:<sha> node -p process.arch
+```
+
+```
+2a0fe02: Pulling from <your-github-user>/seedhi-react-api
+0d5907b49dcd: Pull complete
+…
+Digest: sha256:9bfefcf77e4f05efb163aa2bf65d3c9a8d29ca188ecb6b71667b4ce4da8e9388
+Status: Downloaded newer image for ghcr.io/<your-github-user>/seedhi-react-api:<sha>
+ghcr.io/<your-github-user>/seedhi-react-api:<sha>
+x64
+```
+
+The digest is the one `docker push` printed: the server runs exactly the image you built.
+`x64` is `x86_64` in Node's words. For the Next.js track, use `seedhi-nextjs`.
+
+`docker image ls` shows what it costs on disk:
+
+```
+REPOSITORY:TAG                                      SIZE
+ghcr.io/<your-github-user>/seedhi-nextjs:<sha>      304MB
+ghcr.io/<your-github-user>/seedhi-react-api:<sha>   280MB
+```
+
+About 65–70 MB travel over the network (compressed, lesson 2.2); unpacked, each version takes
+about 300 MB of the 10 GB disk. Most of that is the shared `node:22-alpine` base, so a second
+version of the same image adds only its own layers, and lesson 5.3 prunes all but the last two.
 
 ## What you learned
 
+Images are built off the server and tagged with what they contain: the commit SHA for people,
+the tree hash so a merge can reuse a tested image. A registry is just storage with a name, and
+for a 1 GB server the important parts are that the image matches its CPU and that pulling it
+needs nothing but the name.
+
 ## Undo
+
+On the server, as `deploy` (lesson 4.2 needs the image, so do this only when tearing down):
+
+```bash
+docker rmi ghcr.io/<your-github-user>/seedhi-react-api:<sha>
+```
+
+On your computer:
+
+```bash
+docker rmi ${IMAGE}:${SHA} ${IMAGE}:tree-${TREE}
+docker logout ghcr.io
+```
+
+On GitHub: Packages → the package → Package settings → Delete this package (lesson 8.3).

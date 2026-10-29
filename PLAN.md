@@ -104,7 +104,11 @@ feature ──PR──► staging ──PR──► main
 - Merge to `staging`: build images, push to GHCR, write `.env.staging`, migrate, deploy, smoke test.
 - Merge to `main` (= QA approval): back up prod, migrate, deploy, smoke test.
 - Images are tagged with the tree hash (`git rev-parse HEAD^{tree}`) and the commit SHA, so
-  production reuses the exact image QA tested.
+  production reuses the exact image QA tested. Tags are short: `<sha>` and `tree-<tree>`
+  (`git rev-parse --short`), never `latest`.
+- Images are built for `linux/amd64` with `--provenance=false` (one manifest, so GHCR reads
+  the `org.opencontainers.image.source` label that links the package to the repo). GHCR
+  packages are **public**: no secrets in images, and the server pulls without a token.
 - Branch protection: PR-only, CI required. Hotfix: branch from `main`, then merge `main` back
   into `staging`. Rollback: redeploy the previous image.
 - Builds only in CI, never on the VPS.
