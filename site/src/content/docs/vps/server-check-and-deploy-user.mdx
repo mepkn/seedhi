@@ -1,6 +1,6 @@
 ---
 title: "Server check & deploy user"
-description: "Create a deploy user with its own SSH key for CI."
+description: "Check the server is what the guide expects, then create a deploy user with its own SSH key for CI."
 sidebar:
   label: "3.1 Server check & deploy user"
   order: 1
@@ -8,16 +8,211 @@ sidebar:
 
 ## Goal
 
-Create a deploy user with its own SSH key for CI.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Check the server is what the guide expects, then create a `deploy` user with its own SSH key
+and a `/srv/guestbook` folder it owns. Part 4 deploys as this user by hand; Part 5 hands its
+key to GitHub Actions.
 
 ## Steps
 
+### 1. Check the server
+
+Log in as yourself and run these. They only read.
+
+```bash
+grep PRETTY_NAME /etc/os-release
+nproc && free -m && df -h /
+systemd-detect-virt
+docker version --format '{{.Server.Version}}' && docker compose version
+systemctl is-active docker caddy cloudflared
+```
+
+On the server this guide was written on:
+
+```
+PRETTY_NAME="Ubuntu 24.04.4 LTS"
+1
+               total        used        free      shared  buff/cache   available
+Mem:            1024         344          21          28         686         679
+Swap:            512           8         503
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop12     9.8G  3.2G  6.1G  35% /
+lxc
+29.6.1
+Docker Compose version v5.2.0
+active
+active
+active
+```
+
+What to look for:
+
+| Check | Expect | If not |
+|---|---|---|
+| OS | a current Ubuntu or Debian | the commands still work; package names may differ |
+| CPU, memory | 1 core, about 1 GB | more is fine; the budget in 3.2 just gets easier |
+| Disk | a few GB free | images, logs and backups need about 2 GB (Part 6 checks it) |
+| `systemd-detect-virt` | `kvm` (a full VM) or `lxc` / `openvz` (a container) | see below |
+| Docker, Compose | Docker 25+, Compose v2+ | install Docker from docker.com, not the distro's old package |
+| Services | three times `active` | lesson 0.2 lists what each one is for |
+
+**VM or container?** A `kvm` VPS has its own kernel, and you control swap and kernel
+settings. An `lxc` or `openvz` VPS shares the host's kernel: swap and memory limits are set
+by the provider, and some commands (`swapon`, `sysctl`) are refused. This guide's server is
+`lxc`; lesson 3.2 covers both.
+
+### 2. See what is reachable from outside
+
+```bash
+ss -tlnH | awk '{print $4}' | sort -u
+```
+
+```
+*:8080
+0.0.0.0:22
+127.0.0.1:2019
+127.0.0.1:3000
+127.0.0.1:5250
+…
+[::]:22
+```
+
+Read the address before the port. `127.0.0.1` (or `[::1]`) is reachable only from the server
+itself. `0.0.0.0`, `*` and `[::]` mean every network interface, so anyone who can reach the
+server's IP can reach the port, unless a firewall or the provider's NAT stops them. Here SSH
+and Caddy listen everywhere and everything else is local.
+
+Caddy only needs to be reached by `cloudflared` on the same server. Test from **your
+computer** whether the public can reach it too:
+
+```bash
+curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://<server-ip>:8080/
+```
+
+On this server SSH is forwarded from port 20044 and nothing else gets in (the address is a
+private `10.10.10.x` behind the provider's NAT), so the request reaches some other machine or
+times out. If **your** Caddy answers (`200` or Caddy's empty `404` with `Server: Caddy`), the
+tunnel can be bypassed: block the port with your firewall, or bind Caddy to `127.0.0.1`.
+
+:::caution[Docker ignores ufw]
+A port published with `ports: "8080:3000"` listens on every interface, and Docker writes its
+own firewall rules ahead of ufw's, so `ufw deny` does not block it. That is why every compose
+file in this guide publishes to `127.0.0.1:` only.
+:::
+
+### 3. Why a separate user
+
+CI needs to SSH into the server to deploy. You could hand it your own key, but then GitHub
+holds a key to an account with `sudo`, and revoking it means replacing the key you use every
+day. A `deploy` user has:
+
+- **its own key**, which lives only on your computer (for Part 4) and in a GitHub secret
+  (Part 5); deleting one line in its `authorized_keys` revokes it;
+- **no sudo and no password**, so the key can't change the system;
+- **one folder**, `/srv/guestbook`, for its compose and env files.
+
+It is in the `docker` group, because deploying means running `docker compose`. Be honest about
+what that means: anyone who can talk to Docker can start a container that mounts `/` and
+become root. The separate user limits mistakes and keeps the key easy to revoke; it is not a
+security boundary against someone holding the key. Keep the private key out of chats, repos
+and screenshots.
+
+### 4. Make the key on your computer
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/seedhi_deploy -N "" -C "seedhi-deploy"
+scp ~/.ssh/seedhi_deploy.pub <you>@<server-ip>:seedhi_deploy.pub
+```
+
+`-N ""` means no passphrase: GitHub Actions has nobody to type one. That is acceptable for a
+key that can only log in as `deploy`, and it is why the key gets its own user. Only the
+public half (`.pub`) leaves your computer here.
+
+### 5. Create the user and its folder
+
+On the server:
+
+```bash
+sudo adduser --disabled-password --gecos "" deploy
+sudo usermod -aG docker deploy
+sudo install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+sudo install -m 600 -o deploy -g deploy ~/seedhi_deploy.pub /home/deploy/.ssh/authorized_keys
+sudo install -d -m 750 -o deploy -g deploy /srv/guestbook
+rm ~/seedhi_deploy.pub
+```
+
+- `--disabled-password`: the account has no password, so it can't log in with one or use
+  `sudo`, but SSH keys work.
+- `install -d -m 700 -o deploy -g deploy` creates a folder with its owner and mode in one
+  step. SSH refuses keys in a `.ssh` folder or `authorized_keys` file others can write to.
+- `/srv/guestbook` is `750`: `deploy` can write, nobody else can read the env files it will
+  hold.
+
+While you have `sudo`, check that SSH accepts keys only and refuses root:
+
+```bash
+sudo sshd -T | grep -E '^(passwordauthentication|permitrootlogin|pubkeyauthentication) '
+```
+
+```
+permitrootlogin no
+pubkeyauthentication yes
+passwordauthentication no
+```
+
+If `passwordauthentication` says `yes`, fix that first: with a `deploy` user that has no
+password it is no new risk, but your own account is exposed to password guessing.
+
 ## Verify
+
+From your computer, log in **as `deploy`** with the new key and try what deploys need and
+what they must not be able to do:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy -o IdentitiesOnly=yes deploy@<server-ip> '
+  id
+  docker ps --format "{{.Names}}" | wc -l
+  ls -ld /srv/guestbook
+  touch /srv/guestbook/test && rm /srv/guestbook/test && echo "can write /srv/guestbook"
+  sudo -n true 2>&1
+'
+```
+
+`IdentitiesOnly=yes` makes SSH offer only this key, so the test can't pass by accident with
+your own key. Add `-p <port>` if your SSH port is not 22.
+
+```
+uid=1000(deploy) gid=1000(deploy) groups=1000(deploy),100(users),989(docker)
+8
+drwxr-x--- 2 deploy deploy 4096 Oct 29 15:06 /srv/guestbook
+can write /srv/guestbook
+sudo: a password is required
+```
+
+`deploy` is in the `docker` group (Ubuntu's `adduser` also adds every new user to `users`),
+can see the containers (8 on this server) and can write its folder. `sudo` asks for a password
+the account doesn't have, and `deploy` is not in the `sudo` group anyway, so it can never use
+it.
 
 ## What you learned
 
+Check a server before you build on it: what kind of machine it is, what runs on it and what
+the outside world can reach. Give automation its own user and key, so it gets exactly what it
+needs and can be cut off without touching your own access.
+
 ## Undo
+
+On the server (from your own account):
+
+```bash
+sudo deluser --remove-home deploy
+sudo rm -rf /srv/guestbook
+```
+
+On your computer:
+
+```bash
+rm ~/.ssh/seedhi_deploy ~/.ssh/seedhi_deploy.pub
+```
+
+`deluser` also takes `deploy` out of the `docker` group. Part 5 adds the key to GitHub; lesson
+8.3 deletes it there.

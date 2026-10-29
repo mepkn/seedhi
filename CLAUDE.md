@@ -8,14 +8,14 @@ repo `mepkn/seedhi` (public).
 branches and CI/CD, migrations, VPS memory budget, monitoring tools, alerts, the lesson list and
 names. Don't re-decide what it settles; if something must change, update PLAN.md too.
 
-## Status (2026-10-29, session 4)
+## Status (2026-10-29, session 5)
 
 Done:
 - `examples/react-hono-postgres/`: backend (Hono, Drizzle, Zod, pino, request IDs, rate limit,
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks) and Part 2 (2.1–2.3). Code in Part 1 is imported from
+  (1.1–1.9, both tracks) and Part 2 (2.1–2.3) and 3.1. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -49,10 +49,21 @@ Done:
   both images run `node src/db/migrate.ts` for migrations. Per-track `compose.yml` (+ React's
   `Caddyfile`) runs the images locally on :8080. Lessons 2.1–2.3 written; every Verify run on
   this Mac (images ~65/~70 MB compressed; idle RAM: API 31 MB, Next.js 57 MB, Postgres ~27 MB).
+- Lesson 3.1 (session 5, 2026-10-29): written and verified. VPS is `lxc` (Proxmox,
+  `systemd-detect-virt`), private IP 10.10.10.47 behind NAT; only SSH (20044) is forwarded, so
+  Caddy's `*:8080` isn't public (public :8080/:22 on that IP are other machines). `deploy` user
+  created (uid 1000, groups deploy/users/docker, no password, no sudo), key
+  `~/.ssh/seedhi_deploy` on the Mac (no passphrase), `/srv/guestbook` is `deploy:deploy 750`.
+  `pkn`'s sudo needs a password: put sudo steps in a script in `~` and ask the user to run
+  `ssh -t -p 20044 pkn@37.187.139.100 'sudo sh ~/<script>'`, then delete it.
 
 Next, in order:
-1. Parts 3–8 in order, each verified on the real VPS before its lesson is written. Part 3
-   first (check whether a swapfile is possible on this container-like VPS before 3.2).
+1. Lesson 3.2: on `lxc` a swapfile isn't possible (512 MB host-provided swap already exists),
+   so 3.2 covers both cases; still to do there: `/etc/docker/daemon.json` log rotation
+   (needs sudo + docker restart, which restarts all 8 containers: ask first), `mem_limit`,
+   `docker stats`.
+2. Then 3.3, 3.4 (deploy will need write access to `/var/www/guestbook` for the React track),
+   and Parts 4–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
 
