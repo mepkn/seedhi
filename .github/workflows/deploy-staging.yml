@@ -1,0 +1,111 @@
+# Deploys staging on every push to the staging branch, which with the
+# rulesets means every merged pull request (lesson 5.3): build the image of the
+# track in the TRACK variable, push it to GHCR, write .env.staging, migrate,
+# start, and smoke-test guestbook-staging through Cloudflare.
+name: Deploy staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+# One deploy at a time; a newer one waits instead of cancelling a half-done one.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Secrets and variables of the staging Environment, which only the
+    # staging branch may use.
+    environment:
+      name: staging
+      url: ${{ vars.APP_URL }}
+    env:
+      APP_ENV: staging
+      PORT: ${{ vars.PORT }}
+      TRACK: ${{ vars.TRACK }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Names and tags
+        run: |
+          case "$TRACK" in
+            react-hono-postgres)       image=seedhi-react-api context=examples/react-hono-postgres/backend ;;
+            nextjs-fullstack-postgres) image=seedhi-nextjs    context=examples/nextjs-fullstack-postgres ;;
+            *) echo "::error::repository variable TRACK is '$TRACK'"; exit 1 ;;
+          esac
+          {
+            echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$image"
+            echo "CONTEXT=$context"
+            echo "TAG=$(git rev-parse --short HEAD)"
+            echo "TREE=$(git rev-parse --short 'HEAD^{tree}')"
+          } | tee -a "$GITHUB_ENV"
+
+      # The same build as lesson 4.1, with the token every workflow gets.
+      - name: Build and push the image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --platform linux/amd64 --provenance=false \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "$IMAGE:$TAG" -t "$IMAGE:tree-$TREE" "$CONTEXT"
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:tree-$TREE"
+
+      - uses: actions/setup-node@v7
+        if: env.TRACK == 'react-hono-postgres'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: examples/react-hono-postgres/frontend/package-lock.json
+      - name: Build the frontend
+        if: env.TRACK == 'react-hono-postgres'
+        run: npm ci --prefix examples/react-hono-postgres/frontend &&
+          npm run build --prefix examples/react-hono-postgres/frontend
+
+      # `ssh server` from here on: the deploy user, with CI's own key, and only
+      # if the server's host key is the one saved in DEPLOY_KNOWN_HOSTS.
+      - name: SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host server
+            HostName ${{ vars.DEPLOY_HOST }}
+            Port ${{ vars.DEPLOY_PORT }}
+            User deploy
+            IdentityFile ~/.ssh/deploy
+            BatchMode yes
+          EOF
+
+      # The env file goes through SSH's stdin, so it never exists on the runner's
+      # disk, and umask 077 makes it 600 on the server.
+      - name: Upload the compose file and .env.staging
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          scp "examples/$TRACK/server/compose.yml" server:/srv/guestbook/compose.yml
+          printf 'DATABASE_URL=%s\nLOG_LEVEL=info\n' "$DATABASE_URL" |
+            ssh server "umask 077 && cat > /srv/guestbook/.env.$APP_ENV"
+
+      - name: Pull, migrate, start
+        run: ssh server "APP_ENV=$APP_ENV PORT=$PORT IMAGE=$IMAGE TAG=$TAG bash -s" < scripts/server-deploy.sh
+
+      # After the API, so the new page never calls an API that isn't there yet.
+      - name: Upload the frontend
+        if: env.TRACK == 'react-hono-postgres'
+        run: rsync -az --delete examples/react-hono-postgres/frontend/dist/ "server:${{ vars.WEB_DIR }}/"
+
+      - name: Smoke test
+        run: EXPECT_VERSION="$TAG" scripts/smoke-test.sh "${{ vars.APP_URL }}"
