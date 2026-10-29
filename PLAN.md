@@ -110,6 +110,14 @@ feature ──PR──► staging ──PR──► main
   `scripts/smoke-test.sh <url>` is the one smoke test for CI, staging and production;
   `READ_ONLY=1` skips the POST (production).
 - Merge to `staging`: build images, push to GHCR, write `.env.staging`, migrate, deploy, smoke test.
+  `deploy-staging.yml` (push to `staging` + manual): builds only the `TRACK` repo variable's
+  image, runs `scripts/server-deploy.sh` over SSH (`bash -s`; body in `main()`, `run -T
+  </dev/null`, keeps the 2 newest images plus any in use), rsyncs the React frontend to
+  `WEB_DIR`, smoke-tests `APP_URL` with `EXPECT_VERSION=<sha>`. Repo: variables `TRACK`,
+  `DEPLOY_HOST`, `DEPLOY_PORT`; secrets `DEPLOY_SSH_KEY` (CI's own key, comment `seedhi-ci`
+  in `deploy`'s `authorized_keys`), `DEPLOY_KNOWN_HOSTS`. Environment `staging` (branch
+  `staging` only): variables `APP_URL`, `PORT`, `WEB_DIR`; secret `DATABASE_URL`. Each GHCR
+  package needs Manage Actions access → `seedhi` Write (packages first pushed by hand).
 - Merge to `main` (= QA approval): back up prod, migrate, deploy, smoke test.
 - Images are tagged with the tree hash (`git rev-parse HEAD^{tree}`) and the commit SHA, so
   production reuses the exact image QA tested. Tags are short: `<sha>` and `tree-<tree>`
