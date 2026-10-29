@@ -6,18 +6,191 @@ sidebar:
   order: 5
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import workflow from '../../../../../.github/workflows/deploy-production.yml?raw'
+
+export const inputBlock = workflow.slice(workflow.indexOf('  workflow_dispatch:'), workflow.indexOf('\nconcurrency:'))
+export const switchStep = workflow.slice(workflow.indexOf('      # The whole history'), workflow.indexOf('      - name: Names and tags'))
+export const findStep = workflow.slice(workflow.indexOf('      # The same files were deployed'), workflow.indexOf('          if ! docker pull'))
+
 ## Goal
 
-Put the previous version back in one step.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+A bad version reached production. Put the previous one back in one step, in about a minute,
+without building anything. Then fix it properly, through the normal flow, so the next
+promotion doesn't bring the bug back.
 
 ## Steps
 
+### 1. Roll back, then fix forward
+
+When production is broken, there are two ways out:
+
+- **Roll back**: run the version from before. It's fast, and that version already ran in
+  production, so it's known to work. It's the first move whenever the cause isn't obvious.
+- **Fix forward**: write the fix, or revert the change, and ship it through `staging` like any
+  other change. It takes a few minutes longer, but it's the only thing that changes `main`.
+
+A rollback alone isn't the end: `main` still holds the bad change, and the next promotion
+would deploy it again. So the order is always roll back, then fix forward, and production
+is back on the newest `main` once the fix ships.
+
+### 2. Which version?
+
+The footer, or `/api/health`, says what runs now. GitHub's list of deployments says what ran
+before:
+
+```bash
+curl -s https://guestbook.<your-domain>/api/health
+gh api 'repos/<your-github-user>/seedhi/deployments?environment=production' \
+  --jq '.[:3][] | "\(.sha[:7]) \(.created_at)"'
+```
+
+```
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"052bbf3"}
+052bbf3 2026-10-29T19:40:59Z
+96dbbb8 2026-10-29T19:33:46Z
+e0bb5f7 2026-10-29T19:10:52Z
+```
+
+The one under the current version is the one to go back to. After a rollback, though, this
+list misleads: GitHub records each run under the commit the *workflow* ran on, which for a
+rollback is the newest `main`, not the version it deployed. `/api/health` is always right.
+
+### 3. A `version` input for the production workflow
+
+Lesson 5.4's workflow already does everything a rollback needs: SSH, the env file, backup,
+pull, migrate, start, smoke test. It only needs to do them for an older commit. A manual run
+gets an optional `version`:
+
+<Code code={inputBlock} lang="yaml" title=".github/workflows/deploy-production.yml (excerpt)" />
+
+When it's set, the job switches to that commit before anything else:
+
+<Code code={switchStep} lang="yaml" title=".github/workflows/deploy-production.yml (excerpt)" />
+
+- **The whole commit goes back**, not just the image: the React frontend is built from it and
+  its `compose.yml` is uploaded, so page, API and server config match again.
+- **Except `scripts/`**: how to deploy stays the newest. An old commit's scripts may predate a
+  fix to the deploy itself (lesson 5.3's stdin bug, for one).
+- **Only `main`'s own commits**: promotions are merge commits, so every `staging` commit is in
+  `main`'s history too. `--first-parent` follows only `main`'s line, the commits that were
+  `main` at some point.
+- **`VERSION` comes in through `env:`**, like the secrets in lesson 5.3: whatever someone types
+  into the box stays data.
+
+### 4. The exact image, not the same files
+
+A normal deploy finds the image by tree hash (lesson 5.4). A rollback can't, and this guide
+found out why while testing it. Reverting a change brings back exactly the old files, so the
+same tree hash, and staging built that tree again:
+
+```
+96dbbb8           tree 14c4144   sha256:f3c1d747…   (ran in production)
+b4f73ad (revert)  tree 14c4144   sha256:7a39ad29…   (built again, a new digest)
+```
+
+Same files, two different images: rebuilding is never byte-for-byte the same, which is lesson
+5.4's argument for not building twice. `tree-14c4144` now named the newer build. A rollback
+to `96dbbb8` found by tree hash would have deployed that newer build, and tagged `96dbbb8`
+onto it. So a rollback takes the image tagged with its own commit, the one production actually
+ran, and changes no tags:
+
+<Code code={findStep} lang="yaml" title=".github/workflows/deploy-production.yml (excerpt)" />
+
+A commit that never ran in production has no such tag, so it can't be a rollback target.
+
+### 5. What a rollback doesn't undo
+
+The database. The old version starts against a schema that the newer one's migrations already
+changed, and its migrator sees nothing to do (the newer migrations are recorded, and it knows
+nothing about them). That works as long as migrations only *add*: a new table, a new column
+the old code ignores. A migration that renames or drops something breaks the old version, so
+Part 7 changes the schema in steps that keep the previous version working (7.6, expand and
+contract). If a migration damaged data, the dump lesson 5.4's deploy took right before it is
+what you restore.
+
+### 6. Roll back
+
+On GitHub: **Actions → Deploy production → Run workflow**, branch `main`, version `<sha>`. Or:
+
+```bash
+gh workflow run deploy-production.yml --ref main -f version=<sha>
+gh run watch
+```
+
+Then fix forward: revert the bad change on a branch from `staging`, and ship it like any other
+change.
+
+```bash
+git switch -c revert-<change> origin/staging
+git revert --no-edit <the change's commit on staging>
+git push -u origin revert-<change>
+gh pr create --base staging --fill
+# CI, merge, staging deploys; QA; promote (lesson 5.4)
+```
+
 ## Verify
+
+This guide shipped a real bug to test it: entries listed oldest first (`asc` instead of `desc`
+in the query). CI passed it and so did both smoke tests, because nothing checks the order:
+the kind of bug QA misses. After the promotion:
+
+```bash
+curl -s https://guestbook.<your-domain>/api/entries | jq -c '[.[].id]'
+```
+
+```
+[1,2]
+```
+
+Rolled back to the version before, `96dbbb8`:
+
+```
+HEAD is now at 96dbbb8 Merge pull request #18 from <your-github-user>/staging
+rollback: 96dbbb8 "sha256:f3c1d7473e43a2e33d36ab910c5d02d88003222b22efea2f5e0acea5296d7168"
+backup: backups/guestbook_prod-20261029T200215Z-96dbbb8.sql.gz (4.0K)
+guestbook-production-api-1 ghcr.io/<your-github-user>/seedhi-react-api:96dbbb8 Up 2 seconds (healthy)
+smoke test passed: https://guestbook.<your-domain>
+```
+
+59 seconds from **Run workflow** to green. Production runs the very image that ran as `96dbbb8`
+the first time, and the entries are newest first again:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip> \
+  'docker inspect --format "{{.Image}}" guestbook-production-api-1 | cut -c8-19'
+curl -s https://guestbook.<your-domain>/api/entries | jq -c '[.[].id]'
+```
+
+```
+f3c1d7473e43
+[2,1]
+```
+
+Versions that aren't valid targets are refused before anything changes: a `staging` commit,
+and a `main` commit that only changed the guide (so it never ran in production):
+
+```
+'9a1b50e' is not a commit on main
+no image ghcr.io/<your-github-user>/seedhi-react-api:19cd49b: 19cd49b never ran in production
+```
+
+The revert then went through `staging` and was promoted, and production was on the newest
+`main` again. Running the workflow with no version does the same: deploy the newest `main`,
+for when the rollback was a false alarm.
 
 ## What you learned
 
+A rollback is a deploy of an older version, so it should be the same workflow, not a second,
+less tested one: the same backup, the same smoke test. "Older version" means the whole
+commit, page and config included, run from the exact image that ran before. Same files aren't
+the same image, which this guide only noticed by testing a rollback for real. Rolling back
+buys time; reverting through `staging` is what actually fixes `main`. And the database moves
+only forward, which is why every migration has to leave the previous version working.
+
 ## Undo
+
+Nothing to undo on the server: a rollback is a deploy. If production is still on an older
+version, run the workflow with no `version` to put the newest `main` back. To remove the
+feature, delete the `version` input and the two rollback branches from the workflow with a
+pull request.
