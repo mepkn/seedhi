@@ -11,6 +11,9 @@ import backendPackage from '../../../../../examples/react-hono-postgres/backend/
 import backendTsconfig from '../../../../../examples/react-hono-postgres/backend/tsconfig.json?raw'
 import envExample from '../../../../../examples/react-hono-postgres/backend/.env.example?raw'
 import gitignore from '../../../../../.gitignore?raw'
+import nextPackage from '../../../../../examples/nextjs-fullstack-postgres/package.json?raw'
+import nextTsconfig from '../../../../../examples/nextjs-fullstack-postgres/tsconfig.json?raw'
+import nextEnvExample from '../../../../../examples/nextjs-fullstack-postgres/.env.example?raw'
 
 ## Goal
 
@@ -38,9 +41,46 @@ and one API container), and nothing has to be hoisted or shared at the root.
 </TabItem>
 <TabItem label="Next.js">
 
-:::note[Coming]
-The Next.js track is being built. Follow React + Hono for now.
-:::
+One Next.js app is both the frontend and the backend:
+
+```
+examples/nextjs-fullstack-postgres/
+  src/app/         the page, the Server Action and the /api Route Handlers
+  src/components/  the form, the list, the footer
+  src/lib/         contract, env, logger, errors, rate limit, entries
+  src/db/          Drizzle schema, migrate and seed scripts
+  drizzle/         migrations (identical to the React + Hono track's)
+```
+
+It runs as one Node process in one container. The page, the form and the API share
+`src/lib/` directly, so the contract needs no alias.
+
+Steps 3 to 5 below show the React + Hono backend's files; this track's versions follow
+the same rules:
+
+<Code code={nextPackage} lang="json" title="package.json" />
+
+- `dev` is `next dev`, which reads `.env` by itself; `pino-pretty` makes the JSON logs
+  readable.
+- `start` is `next start`. `db:migrate` and `db:seed` are plain Node scripts, the same as
+  in the other track.
+
+<Code code={nextTsconfig} lang="json" title="tsconfig.json" />
+
+Next.js compiles the app itself, but the migrate and seed scripts run in Node directly and
+import from `src/lib/`. So this track keeps the Hono backend's rules: `.ts` imports and
+erasable syntax only. Next.js adds `allowJs`, `esModuleInterop` and its own `include`
+entries on the first run; keep them.
+
+<Code code={nextEnvExample} lang="sh" title=".env.example" />
+
+There is no `PORT`: `next dev` and `next start` listen on 3000. The database URL says
+`127.0.0.1`, not `localhost`; the comment says why.
+
+```bash
+cd examples/nextjs-fullstack-postgres
+cp .env.example .env
+```
 
 </TabItem>
 </Tabs>
@@ -103,14 +143,17 @@ cd ../frontend && npm install
 </TabItem>
 <TabItem label="Next.js">
 
-:::note[Coming]
-The Next.js track is being built.
-:::
+```bash
+cd examples/nextjs-fullstack-postgres && npm install
+```
 
 </TabItem>
 </Tabs>
 
 ## Verify
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
 
 ```bash
 node -v                        # v22.18.0 or newer
@@ -120,8 +163,25 @@ npm --prefix frontend run check
 git status --short             # .env is not listed
 ```
 
-Both checks finish without errors, and `git status` doesn't show `backend/.env`. From the
-repo root, `scripts/check.sh` runs every part's check in one go.
+Both checks finish without errors, and `git status` doesn't show `backend/.env`.
+
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+node -v                        # v22.18.0 or newer
+cd examples/nextjs-fullstack-postgres
+npm run check
+git status --short             # .env is not listed
+```
+
+The check finishes without errors, and `git status` doesn't show `.env`.
+
+</TabItem>
+</Tabs>
+
+From the repo root, `scripts/check.sh` runs every part's check in one go, and checks that
+both tracks' `drizzle/` folders are identical.
 
 ## What you learned
 
@@ -131,4 +191,5 @@ every variable. Secrets go in `.env`, which git ignores.
 
 ## Undo
 
-Nothing on the server. Locally: `rm -rf */node_modules backend/.env`.
+Nothing on the server. Locally: `rm -rf */node_modules backend/.env` (React + Hono) or
+`rm -rf node_modules .next .env` (Next.js).

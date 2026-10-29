@@ -9,10 +9,12 @@ sidebar:
 import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
 import contract from '../../../../../examples/react-hono-postgres/backend/src/contract.ts?raw'
 import form from '../../../../../examples/react-hono-postgres/frontend/src/components/EntryForm.tsx?raw'
+import nextForm from '../../../../../examples/nextjs-fullstack-postgres/src/components/EntryForm.tsx?raw'
 import viteConfig from '../../../../../examples/react-hono-postgres/frontend/vite.config.ts?raw'
 
 export const contractTop = contract.slice(0, contract.indexOf('export type Entry'))
 export const submit = form.slice(form.indexOf('  async function submit'), form.indexOf('  return (\n'))
+export const nextSubmit = nextForm.slice(nextForm.indexOf('  async function submit'), nextForm.indexOf('  return (\n'))
 
 ## Goal
 
@@ -54,9 +56,27 @@ form, so the server never trusts it.
 </TabItem>
 <TabItem label="Next.js">
 
-:::note[Coming]
-The Next.js track is being built.
-:::
+### 1. The contract
+
+<Code code={contractTop} lang="ts" title="src/lib/contract.ts (start)" />
+
+The same file as in the other track. It imports nothing server-only, so the form, a
+Client Component that also runs in the browser, can import it.
+
+### 2. Validate in the form
+
+<Code code={nextSubmit} lang="tsx" title="src/components/EntryForm.tsx (submit)" />
+
+The form checks with `NewEntry` before calling the Server Action, and shows the server's
+per-field messages if the server disagrees. The action returns its error in the standard
+shape (lesson 1.6) instead of throwing.
+
+### 3. Validate again on the server
+
+`createEntry` in `src/lib/entries.ts` (lesson 1.4) runs `NewEntry.safeParse` and throws a
+`VALIDATION_FAILED` error with `fieldErrors(...)`. A Server Action is a public `POST`
+endpoint like any other, so anyone can call it without your form: both it and
+`POST /api/entries` go through `createEntry`, so neither trusts its input.
 
 </TabItem>
 </Tabs>

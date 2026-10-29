@@ -14,9 +14,17 @@ import rateLimit from '../../../../../examples/react-hono-postgres/backend/src/l
 import api from '../../../../../examples/react-hono-postgres/frontend/src/api.ts?raw'
 import entryList from '../../../../../examples/react-hono-postgres/frontend/src/components/EntryList.tsx?raw'
 import errorNote from '../../../../../examples/react-hono-postgres/frontend/src/components/ErrorNote.tsx?raw'
+import nextErrors from '../../../../../examples/nextjs-fullstack-postgres/src/lib/errors.ts?raw'
+import nextRequest from '../../../../../examples/nextjs-fullstack-postgres/src/lib/request.ts?raw'
+import nextNotFound from '../../../../../examples/nextjs-fullstack-postgres/src/app/api/[...path]/route.ts?raw'
+import nextRateLimit from '../../../../../examples/nextjs-fullstack-postgres/src/lib/rate-limit.ts?raw'
+import nextPageSrc from '../../../../../examples/nextjs-fullstack-postgres/src/app/page.tsx?raw'
+import nextErrorNote from '../../../../../examples/nextjs-fullstack-postgres/src/components/ErrorNote.tsx?raw'
 
 export const errorBody = contract.slice(contract.indexOf('export type ErrorCode'), contract.indexOf('// First message'))
 export const handlers = app.slice(app.indexOf('function errorBody'))
+export const nextErrorBody = nextRequest.slice(nextRequest.indexOf('// Expected errors'), nextRequest.indexOf('// Wraps a Route Handler'))
+export const nextPage = nextPageSrc.slice(nextPageSrc.indexOf('// Render on every'), nextPageSrc.indexOf('  return (\n'))
 export const listStates = entryList.slice(entryList.indexOf('export function EntryList'), entryList.indexOf('  return (\n    <ul className="space-y-3">'))
 
 ## Goal
@@ -67,9 +75,49 @@ components handle one thing.
 </TabItem>
 <TabItem label="Next.js">
 
-:::note[Coming]
-The Next.js track is being built.
-:::
+### 1. One error shape
+
+The same `ApiErrorBody` in `src/lib/contract.ts`, used by the API, the Server Action and
+the page.
+
+### 2. Expected and unexpected errors
+
+An expected error is an `AppError`:
+
+<Code code={nextErrors} lang="ts" title="src/lib/errors.ts" />
+
+Next.js has no app-wide `onError`, so `errorBody()` does that job, and `route()` wraps every
+Route Handler with it:
+
+<Code code={nextErrorBody} lang="ts" title="src/lib/request.ts" />
+
+The Server Action (lesson 1.4) calls the same `errorBody()` and returns the error instead of
+a status code. Stack traces and SQL never reach the browser.
+
+A catch-all route makes unknown `/api` paths answer in the same shape instead of with
+Next.js's HTML 404 page:
+
+<Code code={nextNotFound} lang="ts" title="src/app/api/[...path]/route.ts" />
+
+### 3. Rate limiting is an expected error too
+
+<Code code={nextRateLimit} lang="ts" title="src/lib/rate-limit.ts" />
+
+`createEntry` calls it first, so every post counts, valid or not, through the API or the
+form: five per IP per minute, then `429`.
+
+### 4. Every state on screen
+
+The page is rendered on the server, so there is no loading state for the list: the HTML
+arrives with the entries in it. If the query fails, the page catches it and shows the error
+with its request ID instead of crashing:
+
+<Code code={nextPage} lang="tsx" title="src/app/page.tsx (data)" />
+
+<Code code={nextErrorNote} lang="tsx" title="src/components/ErrorNote.tsx" />
+
+**Try again** calls `router.refresh()`: the server renders the page again. The form's own
+states (sending, field errors, a failed action) are in `EntryForm.tsx`.
 
 </TabItem>
 </Tabs>
@@ -101,6 +149,12 @@ The API's terminal shows `ERROR: unhandled error` with the same `requestId` and 
 cause. With the frontend running (lesson 1.8), reload the page now: the list shows the error
 with `ref 42851e89-…` and a **Try again** button. Start Postgres again
 (`docker compose … start --wait`) and press it: the entries load.
+
+:::tip[Next.js track]
+Same commands, with the compose file at `../../infra/compose/dev.yml`. Reloading
+http://localhost:3000 while Postgres is stopped shows the error and `ref …` in the list,
+and the footer says `db down`, all rendered on the server.
+:::
 
 The empty state: on an empty database (`down -v`, then `npm run db:migrate`) the list says
 "No entries yet. Be the first to sign."

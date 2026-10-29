@@ -51,6 +51,11 @@ The backend connects with the URL from `backend/.env`:
 DATABASE_URL=postgres://guestbook:guestbook@localhost:5432/guestbook
 ```
 
+The Next.js track's `.env` has the same URL with `127.0.0.1` instead of `localhost`.
+`localhost` also resolves to the IPv6 address `::1`, where nothing listens (the port above
+is bound to `127.0.0.1` only). Node tries both, and while the database is down the combined
+failure is an `AggregateError` that `next dev` can't handle. Naming the address avoids it.
+
 ## Verify
 
 ```bash

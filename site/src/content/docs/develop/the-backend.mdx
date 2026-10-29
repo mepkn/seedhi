@@ -12,6 +12,14 @@ import client from '../../../../../examples/react-hono-postgres/backend/src/db/c
 import entries from '../../../../../examples/react-hono-postgres/backend/src/routes/entries.ts?raw'
 import health from '../../../../../examples/react-hono-postgres/backend/src/routes/health.ts?raw'
 import index from '../../../../../examples/react-hono-postgres/backend/src/index.ts?raw'
+import nextEnv from '../../../../../examples/nextjs-fullstack-postgres/src/lib/env.ts?raw'
+import nextInstrumentation from '../../../../../examples/nextjs-fullstack-postgres/src/instrumentation.ts?raw'
+import nextClient from '../../../../../examples/nextjs-fullstack-postgres/src/db/client.ts?raw'
+import nextEntries from '../../../../../examples/nextjs-fullstack-postgres/src/lib/entries.ts?raw'
+import nextEntriesRoute from '../../../../../examples/nextjs-fullstack-postgres/src/app/api/entries/route.ts?raw'
+import nextHealth from '../../../../../examples/nextjs-fullstack-postgres/src/lib/health.ts?raw'
+import nextHealthRoute from '../../../../../examples/nextjs-fullstack-postgres/src/app/api/health/route.ts?raw'
+import nextActions from '../../../../../examples/nextjs-fullstack-postgres/src/app/actions.ts?raw'
 
 ## Goal
 
@@ -61,9 +69,59 @@ npm run dev
 </TabItem>
 <TabItem label="Next.js">
 
-:::note[Coming]
-The Next.js track (Route Handlers for `/api/*`, a Server Action for the form) is being built.
-:::
+### 1. Configuration, checked at startup
+
+<Code code={nextEnv} lang="ts" title="src/lib/env.ts" />
+
+`next build` loads the route modules but has no runtime environment (the image is built
+once, its config comes when it starts), so during the build only the shape is checked. When
+the server starts, `instrumentation.ts` imports the logger, and with it `env.ts`:
+
+<Code code={nextInstrumentation} lang="ts" title="src/instrumentation.ts" />
+
+### 2. One connection pool
+
+<Code code={nextClient} lang="ts" title="src/db/client.ts" />
+
+The same file as in the other track.
+
+### 3. One place for the logic
+
+The page, the API and the form's Server Action all read and write entries through one
+module, so they can't behave differently:
+
+<Code code={nextEntries} lang="ts" title="src/lib/entries.ts" />
+
+### 4. Route Handlers for `/api/*`
+
+A folder under `src/app/api/` with a `route.ts` is an endpoint; each exported HTTP method
+is a handler. `route()` (lessons 1.6 and 1.7) adds error handling and request logs.
+
+<Code code={nextEntriesRoute} lang="ts" title="src/app/api/entries/route.ts" />
+
+<Code code={nextHealth} lang="ts" title="src/lib/health.ts" />
+
+<Code code={nextHealthRoute} lang="ts" title="src/app/api/health/route.ts" />
+
+Health checks the database on every call. Uptime monitoring (lesson 6.1) relies on the
+`503` when Postgres is down, and the footer shows `track`, `env` and `version`.
+
+### 5. A Server Action for the form
+
+The form doesn't call `/api/entries`. It calls a function marked `"use server"`; Next.js
+turns the call into a `POST` to the page and runs the function on the server:
+
+<Code code={nextActions} lang="ts" title="src/app/actions.ts" />
+
+`revalidatePath("/")` re-renders the page on the server in the same round trip, so the
+browser gets the updated list with the answer. Lesson 1.8 uses it from the form.
+
+### 6. Start the server
+
+```bash
+cd examples/nextjs-fullstack-postgres
+npm run dev
+```
 
 </TabItem>
 </Tabs>
@@ -71,6 +129,11 @@ The Next.js track (Route Handlers for `/api/*`, a Server Action for the form) is
 ## Verify
 
 With Postgres up and the API running, in a second terminal:
+
+:::tip[Next.js track]
+The commands are the same; `track` says `nextjs-fullstack-postgres`. The app folder is one
+level higher, so the compose file is `../../infra/compose/dev.yml`.
+:::
 
 ```bash
 curl -i localhost:3000/api/health
@@ -107,9 +170,28 @@ The API itself never crashed.
 
 Finally, break the config on purpose:
 
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
 ```bash
 DATABASE_URL=mysql://x node src/index.ts
 ```
+
+</TabItem>
+<TabItem label="Next.js">
+
+Stop `npm run dev` first (Next.js allows one dev server per folder), then:
+
+```bash
+npm run build
+DATABASE_URL=mysql://x npx next start
+```
+
+`next start` prints `Ready`, then `instrumentation.ts` runs and the process exits before
+it answers a single request.
+
+</TabItem>
+</Tabs>
 
 ```
 Invalid environment:

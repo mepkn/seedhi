@@ -19,6 +19,13 @@ Every database, from your laptop to production, gets its tables the same way.
 
 ## Steps
 
+:::tip[Next.js track]
+The files are the same, without the `backend/` folder: `src/db/schema.ts`,
+`drizzle.config.ts`, `drizzle/` and `src/db/migrate.ts` in
+`examples/nextjs-fullstack-postgres/`. Run the same `npm run db:*` commands there.
+`scripts/check.sh` fails if the two tracks' `drizzle/` folders ever differ.
+:::
+
 ### 1. The schema
 
 <Code code={schema} lang="ts" title="backend/src/db/schema.ts" />

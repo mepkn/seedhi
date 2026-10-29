@@ -9,6 +9,9 @@ sidebar:
 import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
 import viteConfig from '../../../../../examples/react-hono-postgres/frontend/vite.config.ts?raw'
 import footer from '../../../../../examples/react-hono-postgres/frontend/src/components/Footer.tsx?raw'
+import nextPage from '../../../../../examples/nextjs-fullstack-postgres/src/app/page.tsx?raw'
+import nextForm from '../../../../../examples/nextjs-fullstack-postgres/src/components/EntryForm.tsx?raw'
+import nextFooter from '../../../../../examples/nextjs-fullstack-postgres/src/components/Footer.tsx?raw'
 
 ## Goal
 
@@ -55,9 +58,40 @@ live.
 </TabItem>
 <TabItem label="Next.js">
 
-:::note[Coming]
-The Next.js track is being built.
-:::
+### 1. One origin by design
+
+The page and `/api` come from the same Next.js server, so there is no proxy to set up and
+no API URL anywhere: same origin, no CORS, one build for every environment.
+
+### 2. Server and Client Components
+
+The page is a Server Component. It runs only on the server and reads the database through
+`src/lib/` directly, without an HTTP request:
+
+<Code code={nextPage} lang="tsx" title="src/app/page.tsx" />
+
+The form needs the browser (typing, counters, instant validation), so it starts with
+`"use client"` and calls the Server Action:
+
+<Code code={nextForm} lang="tsx" title="src/components/EntryForm.tsx" />
+
+After a successful post, the action has already re-rendered the page (`revalidatePath`),
+so the new entry appears without any code here to add it.
+
+### 3. Start it
+
+```bash
+cd examples/nextjs-fullstack-postgres && npm run dev
+```
+
+Open http://localhost:3000.
+
+### 4. The footer
+
+<Code code={nextFooter} lang="tsx" title="src/components/Footer.tsx" />
+
+It calls the same `health()` as `/api/health`, on the server. After every deploy, the footer
+tells you which version is really live.
 
 </TabItem>
 </Tabs>
@@ -75,6 +109,9 @@ Neither is better for a guestbook. The SPA keeps the server smaller; server rend
 content sooner and works before JavaScript loads.
 
 ## Verify
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
 
 ```bash
 curl -s localhost:5173/api/health   # the API's answer, through Vite
@@ -96,6 +133,26 @@ npm run build
 grep -l 'localhost:3000' dist/assets/* || echo "no API URL in bundle"
 ```
 
+</TabItem>
+<TabItem label="Next.js">
+
+```bash
+curl -s localhost:3000/ | grep -o 'Hello'   # the entries are in the HTML itself
+```
+
+The HTML already contains the entries: the server queried the database before answering.
+In the browser at http://localhost:3000:
+
+1. The footer shows `nextjs-fullstack-postgres · development · dev · db up`.
+2. Submit the empty form: both fields show their message and no request is sent.
+3. Sign the guestbook: the entry appears at the top without a reload. In DevTools →
+   Network, it is one `POST` to `/` (the Server Action), not to `/api/entries`.
+4. Stop Postgres and reload: the list shows the error with its `ref` and the footer says
+   `db down`. Start it again and press **Try again**.
+
+</TabItem>
+</Tabs>
+
 ## What you learned
 
 Same-origin `/api` with a proxy in front makes the frontend build independent of where it is
@@ -103,4 +160,4 @@ deployed. That one decision removes CORS and per-environment builds.
 
 ## Undo
 
-Stop both dev servers. `rm -rf dist` removes the test build.
+Stop the dev servers. `rm -rf dist` removes the React test build.
