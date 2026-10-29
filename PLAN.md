@@ -119,6 +119,13 @@ feature ──PR──► staging ──PR──► main
   `staging` only): variables `APP_URL`, `PORT`, `WEB_DIR`; secret `DATABASE_URL`. Each GHCR
   package needs Manage Actions access → `seedhi` Write (packages first pushed by hand).
 - Merge to `main` (= QA approval): back up prod, migrate, deploy, smoke test.
+  `deploy-production.yml` (push to `main` except `paths-ignore: site/**, **.md`; manual):
+  builds nothing. Pulls `tree-<main tree>` (missing = never on staging: stop), tags it with
+  main's SHA by pull/tag/push (not `imagetools create`, which makes a new index digest) and
+  checks the digests match; `server-deploy.sh` with `BACKUP=1` (`pg_dump` in the Postgres
+  container → `/srv/guestbook/backups/`, 600, last 5); `READ_ONLY=1` smoke test.
+  Environment `production` (branch `main` only): `APP_URL`, `PORT=3100`, `WEB_DIR`,
+  secret `DATABASE_URL`. No required reviewers: the promotion merge is the approval.
 - Images are tagged with the tree hash (`git rev-parse HEAD^{tree}`) and the commit SHA, so
   production reuses the exact image QA tested. Tags are short: `<sha>` and `tree-<tree>`
   (`git rev-parse --short`), never `latest`.

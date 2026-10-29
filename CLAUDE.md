@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1–5.3. Code in Part 1 is imported from
+  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1–5.4. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
@@ -119,9 +119,14 @@ Done:
   the user). `deploy` has 2 authorized keys (the Mac's, `seedhi-ci`). First deploy found
   `docker compose run` eating the `bash -s` script (green step, staging down; smoke test
   caught it). The classifier blocks adding SSH keys and writing GitHub secrets: ask the user.
+- Lesson 5.4 (session 7): written and verified. Production is **deployed by CI** since PR #14
+  (`e0bb5f7`, same image ID as staging's `5380aa9`); first backup in `/srv/guestbook/backups/`.
+  Stray `retag-test` tag on the GHCR version of `ac1292d` (from testing; can't untag alone,
+  goes with teardown). Pushes to `main` touching only `site/` or `.md` don't deploy production
+  (PR #16 confirmed).
 
 Next, in order:
-1. Part 5 (5.4 promote to production, 5.5 rollback, …), then
+1. Part 5 (5.5 rollback, 5.6 hotfixes, 5.7 low-memory mode), then
    Parts 6–8, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
