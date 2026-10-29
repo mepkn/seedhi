@@ -6,18 +6,304 @@ sidebar:
   order: 3
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import workflow from '../../../../../.github/workflows/deploy-staging.yml?raw'
+import serverDeploy from '../../../../../scripts/server-deploy.sh?raw'
+
 ## Goal
 
-Merging into staging builds, pushes, migrates, deploys and smoke-tests staging.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Every merge into `staging` deploys itself: GitHub Actions builds the image, pushes it to GHCR,
+writes `.env.staging` on the server, runs the migrations, starts the app on port 3101 and
+smoke-tests `https://guestbook-staging.<your-domain>`. It's lesson 4.1 and 4.2 written down
+once, so nobody has to do them by hand again.
 
 ## Steps
 
+### 1. What the workflow needs
+
+```
+GitHub (repository)                      the server
+├── variable TRACK          ────────►    which image to build
+├── variables DEPLOY_HOST, DEPLOY_PORT
+├── secret DEPLOY_SSH_KEY   ──ssh──►     deploy@server (its own key, step 2)
+├── secret DEPLOY_KNOWN_HOSTS            proves the server is yours
+└── Environment "staging" (only the staging branch may use it)
+    ├── variables APP_URL, PORT, WEB_DIR
+    └── secret DATABASE_URL ────────►    /srv/guestbook/.env.staging
+```
+
+- **Variables** are plain configuration, visible in the logs. **Secrets** are encrypted,
+  masked as `***` in the logs, and never shown again after you set them.
+- **An Environment** is a named set of variables and secrets, plus rules about who may use
+  them. Staging and production (5.4) have the same names (`PORT`, `DATABASE_URL`) with
+  different values, so one workflow shape serves both.
+- **The repository-wide ones** are the same for both environments: one server, one track.
+
+### 2. A key for CI
+
+The workflow logs in to the server as `deploy`, like you did in Part 4, but with a key of its
+own. If it ever leaks, you remove one line from `authorized_keys` and your own access stays.
+Generate it in a throwaway folder, give the public half to `deploy` and the private half to
+GitHub, then delete both:
+
+```bash
+mkdir -m 700 /tmp/seedhi-ci && cd /tmp/seedhi-ci
+ssh-keygen -q -t ed25519 -N '' -C seedhi-ci -f seedhi_ci
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip> 'cat >> ~/.ssh/authorized_keys' < seedhi_ci.pub
+gh secret set DEPLOY_SSH_KEY -R <your-github-user>/seedhi < seedhi_ci
+```
+
+`-N ''` means no passphrase: nobody is there to type one. `-C seedhi-ci` labels the line in
+`authorized_keys`, which is how the undo finds it.
+
+The runner has never seen your server, so SSH would ask "are you sure you want to connect?"
+and, in a workflow, fail. Give it the server's host key instead, and check it's the one your
+own computer already trusts (the first `ssh` in lesson 3.1 saved it):
+
+```bash
+ssh-keyscan -t ed25519 <server-ip> 2>/dev/null > known_hosts
+ssh-keygen -lf known_hosts
+ssh-keygen -F <server-ip> -l | grep ED25519
+```
+
+```
+256 SHA256:npT82hlhd1MxxjFM9xsttKBgPIah3QnCYIpcE/oJj5U [37.187.139.100]:20044 (ED25519)
+[37.187.139.100]:20044 ED25519 SHA256:npT82hlhd1MxxjFM9xsttKBgPIah3QnCYIpcE/oJj5U
+```
+
+The same fingerprint twice: nobody is in between. Save it and clean up:
+
+```bash
+gh secret set DEPLOY_KNOWN_HOSTS -R <your-github-user>/seedhi < known_hosts
+cd ~ && rm -rf /tmp/seedhi-ci
+```
+
+With SSH on another port (this guide's server uses `20044`), add `-p <port>` to `ssh`
+and `ssh-keyscan`, and look it up with `ssh-keygen -F '[<server-ip>]:<port>'`.
+
+### 3. Variables and the staging Environment
+
+```bash
+R=<your-github-user>/seedhi
+gh variable set TRACK -R $R -b react-hono-postgres     # or nextjs-fullstack-postgres
+gh variable set DEPLOY_HOST -R $R -b <server-ip>
+gh variable set DEPLOY_PORT -R $R -b 22
+```
+
+Create the Environment and allow only the `staging` branch to use it. A workflow running for
+any other branch, a pull request's for example, gets none of its secrets:
+
+```bash
+gh api -X PUT repos/$R/environments/staging --input - <<'EOF'
+{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+EOF
+gh api -X POST repos/$R/environments/staging/deployment-branch-policies \
+  -f name=staging -f type=branch
+gh variable set APP_URL -R $R -e staging -b https://guestbook-staging.<your-domain>
+gh variable set PORT -R $R -e staging -b 3101
+gh variable set WEB_DIR -R $R -e staging -b /var/www/guestbook-staging
+```
+
+`WEB_DIR` is where the React frontend goes (lesson 3.4); the Next.js track ignores it.
+
+The database URL is built on the server, from the password lesson 3.3 generated, and piped
+straight into GitHub. It never appears on your screen or your disk:
+
+```bash
+ssh -i ~/.ssh/seedhi_deploy deploy@<server-ip> '. /srv/guestbook/postgres/db-passwords &&
+  printf "postgres://guestbook_staging:%s@postgres:5432/guestbook_staging" "$STAGING_DB_PASSWORD"' |
+  gh secret set DATABASE_URL -R $R -e staging
+gh secret list -R $R
+gh secret list -R $R -e staging
+```
+
+```
+DEPLOY_KNOWN_HOSTS  2026-10-29T18:30:58Z
+DEPLOY_SSH_KEY      2026-10-29T18:30:56Z
+DATABASE_URL        2026-10-29T18:32:35Z
+```
+
+The same settings are under the repository's **Settings → Environments** and **Settings →
+Secrets and variables → Actions**.
+
+### 4. Let the workflow push to the packages
+
+Every workflow gets a token, `GITHUB_TOKEN`, that can push to packages *of its repository*.
+The two packages from lesson 4.1 were created from your computer, so they don't count yet,
+even though they're linked to the repository. On GitHub, for each package: your profile →
+Packages → the package → **Package settings** → **Manage Actions access** → **Add
+Repository** → `seedhi`, role **Write**. Without it, the first run fails at the push:
+
+```
+error from registry: permission_denied: write_package
+```
+
+A package first pushed *by* a workflow gets this access on its own.
+
+### 5. The server side
+
+The workflow sends one script to the server: lesson 4.2's three commands, plus cleaning up old
+images so the 10 GB disk doesn't fill up one deploy at a time:
+
+<Code code={serverDeploy} lang="bash" title="scripts/server-deploy.sh" />
+
+- **`main` wraps everything**, and this guide learned why the hard way. The workflow runs
+  `ssh server "… bash -s" < scripts/server-deploy.sh`: bash reads the script from stdin as
+  it goes. `docker compose run` also reads stdin, so it swallowed the rest of the script:
+  the first deploy ran the migrations and stopped there, *with exit code 0*. The step was
+  green and staging wasn't running. Only the smoke test noticed (`GET /api/health returned
+  502`). Inside a function, bash reads the whole script before the first command runs; `-T`
+  and `</dev/null` keep `run` away from stdin as well.
+- **Two images kept**: the new one and the one before, for a fast rollback (5.5). Anything
+  older is removed, unless a container uses it: production may run an older image than
+  staging. The check is by image ID, because `docker rmi` happily removes one *tag* of an
+  image a container is using.
+- **`--remove-orphans`** removes containers of this project that the compose file no longer
+  defines, if you ever rename a service.
+
+### 6. The workflow
+
+<Code code={workflow} lang="yaml" title=".github/workflows/deploy-staging.yml" />
+
+- **`on: push: branches: [staging]`**: with lesson 5.1's rules, the only pushes to
+  `staging` are merged pull requests. `workflow_dispatch` adds a **Run workflow** button,
+  for redeploying without a change.
+- **`concurrency` without cancelling**: two quick merges deploy one after the other.
+  Cancelling a deploy halfway, between migrate and start, is worse than waiting.
+- **`permissions: packages: write`**: what `GITHUB_TOKEN` needs to push. Compare with CI's
+  `contents: read`: each workflow asks only for what it uses.
+- **`environment: staging`** loads the Environment's variables and secrets, and the `url`
+  shows on the run and in the repository's **Deployments** list.
+- **Secrets go through `env:`**, never `${{ secrets.… }}` inside a script. GitHub pastes
+  `${{ }}` into the script text before it runs, so a value with a quote in it would break the
+  script, or worse, run as part of it. As an environment variable it's only data.
+- **The env file goes through SSH's stdin** with `umask 077`: it's `600` on the server and
+  never touches the runner's disk.
+- **The compose file is uploaded on every deploy**, so the server always runs the committed
+  one. There's one for both environments (lesson 4.2): a change to it reaches the production
+  project's next command too. Production deploys (5.4) upload the same file, so that's only
+  a question of timing.
+- **API first, then the frontend**: the new page never calls an API that isn't there yet.
+- **`EXPECT_VERSION`**: the smoke test waits until health reports *this* commit. Without
+  it, the old version, still answering, would pass.
+
+### 7. Ship it
+
+Commit the workflow, the script and the smoke test's `EXPECT_VERSION` on a branch, open a pull
+request into `staging`, wait for CI and merge it:
+
+```bash
+gh pr merge --squash --delete-branch
+gh run watch
+```
+
+The merge is a push to `staging`, so the workflow runs right away, on the code you just
+merged.
+
 ## Verify
+
+The run on GitHub, step by step (the output below is trimmed to the lines that matter):
+
+```bash
+gh run list -w deploy-staging.yml -L 1
+gh run view <run-id> --log | grep -E 'Pull, migrate, start|Smoke test'
+```
+
+```
+ Image ghcr.io/<your-github-user>/seedhi-react-api:ac1292d Pulled
+ Container guestbook-staging-migrate-run-90146f3d8ae8 Created
+{"level":30,…,"env":"staging","version":"ac1292d","msg":"migrations applied"}
+ Container guestbook-staging-api-1 Started
+ Container guestbook-staging-api-1 Healthy
+guestbook-staging-api-1 ghcr.io/<your-github-user>/seedhi-react-api:ac1292d Up 3 seconds (healthy)
+kept: ac1292d 2e21293 2a0fe02
+ok   GET /api/health  {"ok":true,"db":"up","track":"react-hono-postgres","env":"staging","version":"ac1292d"}
+ok   GET /            200, HTML
+ok   POST invalid     400 VALIDATION_FAILED
+ok   POST /api/entries 201
+ok   GET /api/entries 200, has the new entry
+smoke test passed: https://guestbook-staging.<your-domain>
+```
+
+Three images kept, not two: `2a0fe02` is production's, still running (lesson 4.2). The next
+merge removed the oldest staging image, `2e21293`, and still left production's alone:
+
+```
+kept: 3a3256f ac1292d 2a0fe02
+```
+
+Open `https://guestbook-staging.<your-domain>`: the smoke test's entry is there, and the
+footer shows `staging` and the commit, from the same `/api/health`. Production hasn't changed:
+
+```bash
+curl -s https://guestbook.<your-domain>/api/health
+```
+
+```json
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"production","version":"2a0fe02"}
+```
+
+On the server, as `deploy`:
+
+```bash
+stat -c '%a %U %n' /srv/guestbook/.env.staging
+docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' | grep guestbook
+```
+
+```
+600 deploy /srv/guestbook/.env.staging
+guestbook-staging-api-1 26.56MiB / 128MiB
+guestbook-production-api-1 17.97MiB / 128MiB
+guestbook-postgres 24.6MiB / 160MiB
+```
+
+And the image on GHCR has both tags from one build:
+
+```bash
+gh api /users/<your-github-user>/packages/container/seedhi-react-api/versions \
+  --jq '.[0].metadata.container.tags'
+```
+
+```json
+["tree-5c7aee5","ac1292d"]
+```
 
 ## What you learned
 
+A deploy pipeline is the hand-run steps from Part 4, in a file, with the secrets moved out of
+your head into GitHub. Each credential has one job and one place: CI's own SSH key, a pinned
+host key, a database URL that only the staging branch can read. A green step proves only that
+nothing returned an error; the smoke test at the end, against the public URL, is what proves
+the deploy worked. The first run here showed the difference: every step green, staging down.
+
 ## Undo
+
+On the server, as `deploy` in `/srv/guestbook`:
+
+```bash
+export APP_ENV=staging PORT=3101 TAG=x IMAGE=x
+docker compose -p guestbook-staging down
+rm .env.staging
+find /var/www/guestbook-staging -mindepth 1 -delete
+echo "<h1>guestbook: staging</h1>" > /var/www/guestbook-staging/index.html
+sed -i '/ seedhi-ci$/d' ~/.ssh/authorized_keys
+```
+
+`down` only needs the variables to read the file, so any `TAG` and `IMAGE` will do. The
+staging database keeps its entries (lesson 3.3's undo removes it).
+
+On GitHub (Part 8 does this with the rest of the cloud side, 8.3):
+
+```bash
+R=<your-github-user>/seedhi
+gh api -X DELETE repos/$R/environments/staging
+gh secret delete DEPLOY_SSH_KEY -R $R
+gh secret delete DEPLOY_KNOWN_HOSTS -R $R
+gh variable delete TRACK -R $R
+gh variable delete DEPLOY_HOST -R $R
+gh variable delete DEPLOY_PORT -R $R
+```
+
+Deleting the Environment deletes its variables and secrets. Remove `seedhi` from each
+package's **Manage Actions access**, and the workflow and `scripts/server-deploy.sh` with a
+pull request. The images it pushed go with lesson 4.1's undo.

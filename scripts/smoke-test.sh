@@ -5,6 +5,7 @@
 # workflows run it against staging and production.
 #   scripts/smoke-test.sh http://localhost:8080
 #   READ_ONLY=1 scripts/smoke-test.sh https://guestbook.example.com   # no POST
+#   EXPECT_VERSION=<sha> …   # health must report this version (after a deploy)
 set -euo pipefail
 
 BASE_URL="${1:?usage: scripts/smoke-test.sh <base-url>}"
@@ -23,13 +24,16 @@ request() {
 }
 
 # The app may still be starting: retry health for up to 30 s.
+version="\"version\":\"${EXPECT_VERSION:-}"
 for i in $(seq 1 15); do
   status=$(request GET /api/health)
-  [ "$status" = 200 ] && break
+  [ "$status" = 200 ] && grep -q "$version" "$body" && break
   sleep 2
 done
 [ "$status" = 200 ] || fail "GET /api/health returned $status"
 grep -q '"db":"up"' "$body" || fail "health does not report db up"
+grep -q "$version\"" "$body" || [ -z "${EXPECT_VERSION:-}" ] ||
+  fail "health does not report version $EXPECT_VERSION"
 pass "GET /api/health  $(cat "$body")"
 
 status=$(request GET /)
