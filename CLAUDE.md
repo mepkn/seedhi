@@ -49,8 +49,6 @@ Done:
   both images run `node src/db/migrate.ts` for migrations. Per-track `compose.yml` (+ React's
   `Caddyfile`) runs the images locally on :8080. Lessons 2.1–2.3 written; every Verify run on
   this Mac (images ~65/~70 MB compressed; idle RAM: API 31 MB, Next.js 57 MB, Postgres ~27 MB).
-  On this Mac `~/.docker/buildx/current` is owned by root, so `docker compose --build` fails
-  until `sudo chown -R "$(whoami)" ~/.docker` (workaround: `BUILDX_CONFIG=<other dir>`).
 
 Next, in order:
 1. Parts 3–8 in order, each verified on the real VPS before its lesson is written. Part 3
