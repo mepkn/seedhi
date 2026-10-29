@@ -15,7 +15,7 @@ Done:
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
 - `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3), Part 1
-  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4) and Part 4 (4.1–4.2). Code in Part 1 is imported from
+  (1.1–1.9, both tracks), Part 2 (2.1–2.3), Part 3 (3.1–3.4), Part 4 (4.1–4.2) and 5.1. Code in Part 1 is imported from
   `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
   `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
   sections empty, a "Being written" note).
