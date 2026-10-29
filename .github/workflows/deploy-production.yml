@@ -2,6 +2,8 @@
 # merged pull request from staging: QA's approval (lesson 5.4). Nothing is
 # built: the image staging tested is found by the tree hash and gets main's
 # commit as its version. Backs up the database before migrating.
+# Rollback (lesson 5.5): run it by hand with an older commit of main as
+# `version`; the same steps then put that version back.
 name: Deploy production
 
 on:
@@ -10,6 +12,11 @@ on:
     # The guide and notes only: no app change, and never tested on staging.
     paths-ignore: ["site/**", "**.md"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Commit on main to deploy (a rollback). Empty: the latest."
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-production
@@ -30,7 +37,22 @@ jobs:
       PORT: ${{ vars.PORT }}
       TRACK: ${{ vars.TRACK }}
     steps:
+      # The whole history, so a rollback can go back to any commit of main.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Every later step then works on that commit: its image, its frontend,
+      # its compose file. Only scripts/ (how to deploy) stays main's.
+      - name: Switch to the version to roll back to
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git merge-base --is-ancestor "$VERSION" HEAD ||
+            { echo "::error::'$VERSION' is not a commit on main"; exit 1; }
+          git checkout --detach "$VERSION"
+          git checkout "$GITHUB_SHA" -- scripts/
 
       - name: Names and tags
         run: |
