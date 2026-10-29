@@ -1,0 +1,73 @@
+---
+title: "What you'll build"
+description: "See the guestbook, the two tracks and the whole pipeline before you start."
+sidebar:
+  label: "0.1 What you'll build"
+  order: 1
+---
+
+## Goal
+
+Know where you are going: the app, the two ways to build it, and the path it takes from
+your laptop to production.
+
+## The app: a guestbook
+
+One page. A form to leave your name and a message, and the latest entries below it. The
+footer shows which track, environment and version is live, so after every deploy you can
+see at a glance that the new version really is the one running.
+
+It is small on purpose, but it touches everything a real app needs: a database it reads
+and writes, input that must be validated, errors that must be shown and logged, a health
+check for monitoring, and schema changes that have to reach production safely.
+
+## Two tracks
+
+| | React + Hono | Next.js full-stack |
+|---|---|---|
+| Folder | `examples/react-hono-postgres` | `examples/nextjs-fullstack-postgres` |
+| Frontend | Vite + React, built to static files | Next.js, rendered on the server |
+| Backend | Separate Hono API | Route Handlers + a Server Action, in the same app |
+| On the server | Caddy serves the files; one API container | One Next.js container |
+
+Pick one and follow it all the way. Pages show both with tabs where the steps differ.
+Only one track is deployed at a time; the teardown at the end frees the server for the
+other.
+
+## The path to production
+
+```
+your Mac ──PR──► staging branch ──PR──► main branch
+ (dev)              │                      │
+                deploys to             deploys to
+                STAGING                PRODUCTION
+                (QA tests here)
+```
+
+- **dev**: you work locally, Postgres runs in Docker. No server involved.
+- **CI**: every pull request is checked in GitHub Actions: lint, types, migrations, a
+  Docker build and a smoke test. Images are built here, never on the server.
+- **staging**: merging into `staging` deploys to `guestbook-staging.<your-domain>`.
+- **production**: merging `staging` into `main` deploys the same tested image to
+  `guestbook.<your-domain>`.
+
+Then you watch it: uptime checks, error tracking, analytics, logs, metrics, backups and
+alerts, all on free tiers so the 1 GB server only runs your app.
+
+## How the lessons work
+
+Every lesson has the same parts:
+
+- **Goal**: what you will have at the end.
+- **Steps**: what to do, with the commands.
+- **Verify**: how to check it worked. Don't skip it.
+- **What you learned**: the idea behind the steps.
+- **Undo**: how to remove what the lesson created. Part 8 runs all of these for you.
+
+## Verify
+
+You can answer: which track will you follow, and what are the four environments?
+
+## What you learned
+
+The shape of the whole guide. Next, install the tools and create the accounts.

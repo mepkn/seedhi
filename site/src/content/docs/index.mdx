@@ -1,0 +1,58 @@
+---
+title: Seedhi
+description: Build, deploy and monitor a full-stack app, step by step.
+template: splash
+hero:
+  tagline: Build, deploy and monitor a full-stack app, step by step, on a 1 GB VPS.
+  actions:
+    - text: Start
+      link: /start/what-youll-build/
+      icon: right-arrow
+    - text: Source on GitHub
+      link: https://github.com/mepkn/seedhi
+      icon: github
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components'
+
+_Seedhi_ (सीढ़ी) means staircase: one step at a time, from `localhost` to a monitored
+production app. Every lesson ends with something you check yourself, and the last part
+removes everything again, so you can climb it as often as you like.
+
+## Pick a track
+
+You build the same guestbook either way. Switch tracks on any page with the tabs.
+
+<CardGrid>
+  <Card title="React + Hono" icon="seti:react">
+    A Vite + React single-page app and a separate Hono API. The frontend is static files;
+    the API is one small container.
+  </Card>
+  <Card title="Next.js full-stack" icon="rocket">
+    One Next.js app: pages rendered on the server, Route Handlers for `/api`, a Server
+    Action for the form.
+  </Card>
+</CardGrid>
+
+Both use Postgres with Drizzle, the same schema and the same migrations.
+
+## What you'll do
+
+<CardGrid>
+  <Card title="Develop" icon="pencil">
+    Postgres in Docker, migrations, validation, error handling, structured logs with
+    request IDs.
+  </Card>
+  <Card title="Deploy" icon="rocket">
+    Docker images, env files, a 1 GB VPS behind Cloudflare and Caddy, GitHub Actions with
+    staging and production.
+  </Card>
+  <Card title="Monitor" icon="information">
+    Uptime and a status page, Sentry, PostHog, logs and metrics in Grafana, backups, alerts.
+  </Card>
+  <Card title="Tear down" icon="close">
+    One script puts the server back the way it was, checked against a baseline you
+    record at the start.
+  </Card>
+</CardGrid>

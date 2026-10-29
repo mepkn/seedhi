@@ -1,0 +1,11 @@
+/* Seedhi's accent: teal. Starlight derives the rest of its palette from these. */
+:root {
+  --sl-color-accent-low: #042f2e;
+  --sl-color-accent: #0f766e;
+  --sl-color-accent-high: #99f6e4;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ccfbf1;
+  --sl-color-accent: #0f766e;
+  --sl-color-accent-high: #134e4a;
+}
