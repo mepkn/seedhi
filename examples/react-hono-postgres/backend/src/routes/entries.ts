@@ -1,4 +1,4 @@
-import { desc } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Entry, fieldErrors, NewEntry } from "../contract.ts";
 import { db } from "../db/client.ts";
@@ -18,7 +18,7 @@ export const entries = new Hono<AppEnv>()
     const rows = await db
       .select()
       .from(entriesTable)
-      .orderBy(desc(entriesTable.createdAt))
+      .orderBy(asc(entriesTable.createdAt))
       .limit(LATEST);
     return c.json(rows.map(toEntry));
   })
