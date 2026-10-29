@@ -1,0 +1,83 @@
+# CI on every pull request into staging or main (lesson 5.2). It only checks:
+# nothing is pushed or deployed. The rulesets require all three jobs to pass.
+name: CI
+
+on:
+  pull_request:
+    branches: [staging, main]
+
+# A new push to the same pull request cancels the run still going for it.
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Typecheck, lint and build every part, then check the schema has no
+  # changes without a migration.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - name: Install
+        run: |
+          for dir in examples/react-hono-postgres/backend examples/react-hono-postgres/frontend \
+                     examples/nextjs-fullstack-postgres site; do
+            npm ci --prefix "$dir"
+          done
+      - name: Typecheck, lint, build
+        run: scripts/check.sh
+      # drizzle-kit writes a new migration if schema.ts differs from drizzle/.
+      # Any new file means someone changed the schema and forgot db:generate.
+      - name: Schema drift
+        run: |
+          (cd examples/react-hono-postgres/backend && npx drizzle-kit generate)
+          (cd examples/nextjs-fullstack-postgres && npx drizzle-kit generate)
+          drift=$(git status --porcelain --untracked-files=all -- \
+            examples/react-hono-postgres/backend/drizzle examples/nextjs-fullstack-postgres/drizzle)
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::schema.ts has changes without a migration: run npm run db:generate and commit it"
+            exit 1
+          fi
+
+  # Build each track's production images, run the migrations on an empty
+  # Postgres, start the app and smoke-test it, all inside the runner.
+  smoke:
+    name: smoke (${{ matrix.track }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        track: [react-hono-postgres, nextjs-fullstack-postgres]
+    defaults:
+      run:
+        working-directory: examples/${{ matrix.track }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        if: matrix.track == 'react-hono-postgres'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: examples/react-hono-postgres/frontend/package-lock.json
+      - name: Build the frontend
+        if: matrix.track == 'react-hono-postgres'
+        run: npm ci --prefix frontend && npm run build --prefix frontend
+      - name: Start (build, migrate, run)
+        run: docker compose up -d --build --wait
+      - name: Smoke test
+        run: ../../scripts/smoke-test.sh http://localhost:8080
+      - name: Logs
+        if: always()
+        run: docker compose ps -a && docker compose logs --no-color
+      - name: Stop
+        if: always()
+        run: docker compose down -v
