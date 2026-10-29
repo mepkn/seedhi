@@ -6,18 +6,77 @@ sidebar:
   order: 7
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import logger from '../../../../../examples/react-hono-postgres/backend/src/lib/logger.ts?raw'
+import app from '../../../../../examples/react-hono-postgres/backend/src/app.ts?raw'
+
+export const middleware = app.slice(app.indexOf('// Reuse the X-Request-Id'), app.indexOf('app.route('))
+
 ## Goal
 
-JSON logs with pino, and a request ID that ties a user's error message to the exact log lines.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+JSON logs with pino, and a request ID that ties a user's error message to the exact log
+lines.
 
 ## Steps
 
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+### 1. The logger
+
+<Code code={logger} lang="ts" title="backend/src/lib/logger.ts" />
+
+One JSON object per line. Every line has `track`, `env` and `version`, so once staging and
+production send logs to the same place (lesson 6.3) you can still tell them apart.
+
+### 2. A request ID on every request
+
+<Code code={middleware} lang="ts" title="backend/src/app.ts" />
+
+Hono's `requestId()` reuses an incoming `X-Request-Id` or makes a new one, and sends it
+back in the response header. A child logger carries it, so every line logged during the
+request has it, and one `request` line per request records method, path, status and time.
+
+### 3. Pretty in development, JSON everywhere else
+
+`npm run dev` pipes the output through `pino-pretty`. The container runs `npm start`, which
+writes plain JSON for Docker to collect.
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track is being built.
+:::
+
+</TabItem>
+</Tabs>
+
 ## Verify
+
+Run the API without `pino-pretty` to see what the server will see, on a second port so
+`npm run dev` can keep running:
+
+```bash
+PORT=3001 node --env-file=.env src/index.ts > api.log &
+curl -s -o /dev/null -H 'X-Request-Id: find-me' localhost:3001/api/entries
+jq -c 'select(.requestId == "find-me")' api.log
+kill %1 && rm api.log
+```
+
+```json
+{"level":30,"time":"…","track":"react-hono-postgres","env":"development","version":"dev","requestId":"find-me","method":"GET","path":"/api/entries","status":200,"ms":33,"msg":"request"}
+```
+
+Then the real use: in lesson 1.6 the browser showed `ref 42851e89-…`. Search the `npm run dev`
+terminal for that ID and you find the `unhandled error` line with the database error.
 
 ## What you learned
 
+Logs are data. JSON lines can be filtered with `jq` on the server now and searched in
+Grafana later, and a request ID turns "it said something went wrong" into the exact lines
+that explain it.
+
 ## Undo
+
+Nothing to undo.

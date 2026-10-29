@@ -8,16 +8,88 @@ sidebar:
 
 ## Goal
 
-Save the server's memory, disk, containers and Caddy sites before you change anything, so teardown can prove it put everything back.
+Save the server's memory, disk, containers and Caddy sites before you change anything, so
+teardown can prove it put everything back.
 
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+The guide adds swap, a user, Docker settings, containers, volumes, Caddy sites and cron
+jobs. Lesson 8.2 compares the server with the files you save here; any line that differs is
+something teardown missed.
 
 ## Steps
 
+### 1. Log in
+
+```bash
+ssh <you>@<server-ip>
+```
+
+### 2. Save the baseline
+
+Run this on the server. It only reads, and writes the results into `~/seedhi-baseline/`.
+
+```bash
+mkdir -p ~/seedhi-baseline && cd ~/seedhi-baseline
+
+{ free -m; echo; swapon --show; echo; df -h /; } > system.txt
+docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sort > containers.txt
+docker images --format '{{.Repository}}:{{.Tag}}' | sort > images.txt
+docker volume ls -q | sort > volumes.txt
+docker network ls --format '{{.Name}}' | sort > networks.txt
+ls /etc/caddy/sites/ > caddy-sites.txt 2>&1   # or: cp /etc/caddy/Caddyfile .
+ls -la /srv > srv.txt
+cut -d: -f1 /etc/passwd | sort > users.txt
+crontab -l > crontab.txt 2>&1
+cat /etc/docker/daemon.json > docker-daemon.json 2>&1
+cat /etc/fstab > fstab.txt
+```
+
+If your Caddy keeps all sites in one `/etc/caddy/Caddyfile`, copy that file instead of
+listing `sites/`. If `docker` says permission denied, your user is not in the `docker`
+group: put `sudo` in front of the `docker` commands.
+
+Some files may hold only an error, such as
+`cat: /etc/docker/daemon.json: No such file or directory`. That is a result too: it means
+the file did not exist, so teardown must remove the one lesson 3.2 creates.
+
+### 3. Copy it to your computer
+
+The server is what you are about to change, so keep a copy off it:
+
+```bash
+scp -r <you>@<server-ip>:seedhi-baseline ./seedhi-baseline
+```
+
+`seedhi-baseline/` is not part of the repo; keep it somewhere outside it.
+
 ## Verify
+
+```bash
+ls ~/seedhi-baseline
+cat ~/seedhi-baseline/system.txt
+```
+
+You see the eleven files, and `system.txt` shows total and used memory, any swap and the
+disk. Note the **used** memory and **available** figure in `free -m`: Part 3 budgets the
+1 GB against it. Note too whether a `Swap:` line already shows some swap. On some VPSes the
+provider sets it up, and lesson 3.2 then leaves it alone.
+
+On the server this guide was written on, it looked like this:
+
+```
+               total        used        free      shared  buff/cache   available
+Mem:            1024         344          17          28         690         679
+Swap:            512           8         503
+```
 
 ## What you learned
 
+Change a server only after you have written down what it looked like. A baseline turns
+"I think I cleaned up" into a `diff`.
+
 ## Undo
+
+```bash
+rm -rf ~/seedhi-baseline
+```
+
+Do this only after lesson 8.2, which needs it.

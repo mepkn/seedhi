@@ -6,18 +6,101 @@ sidebar:
   order: 8
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import viteConfig from '../../../../../examples/react-hono-postgres/frontend/vite.config.ts?raw'
+import footer from '../../../../../examples/react-hono-postgres/frontend/src/components/Footer.tsx?raw'
+
 ## Goal
 
-Call same-origin /api, proxied in development, and compare a single-page app with server-rendered HTML.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Call same-origin `/api`, proxied in development, and compare a single-page app with
+server-rendered HTML.
 
 ## Steps
 
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+### 1. Always `/api`, never a full URL
+
+The frontend calls `/api/entries`, not `http://localhost:3000/api/entries`. In development
+Vite forwards `/api` to the API:
+
+<Code code={viteConfig} lang="ts" title="frontend/vite.config.ts" mark="proxy" />
+
+On the server, Caddy does the same job (lesson 3.4): files from disk, `/api/*` to the API
+container. Because the browser only ever talks to one origin:
+
+- the built files contain no API URL, so **one build works in dev, staging and production**;
+- there is no CORS to configure;
+- there is no `VITE_API_URL` to get wrong.
+
+### 2. Start both
+
+```bash
+# terminal 1
+cd examples/react-hono-postgres/backend && npm run dev
+# terminal 2
+cd examples/react-hono-postgres/frontend && npm run dev
+```
+
+Open http://localhost:5173.
+
+### 3. The footer
+
+<Code code={footer} lang="tsx" title="frontend/src/components/Footer.tsx" />
+
+It reads `/api/health`. After every deploy, the footer tells you which version is really
+live.
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track is being built.
+:::
+
+</TabItem>
+</Tabs>
+
+### SPA or server-rendered?
+
+| | React + Hono (SPA) | Next.js (server-rendered) |
+|---|---|---|
+| First response | An empty `index.html` and a JS bundle | HTML that already has the entries |
+| Data | The browser calls `/api/entries` after loading | The server queries the database before answering |
+| Loading state | Needed (skeleton rows) | Mostly not |
+| On the server | Static files + an API process | One Node process for both |
+
+Neither is better for a guestbook. The SPA keeps the server smaller; server rendering shows
+content sooner and works before JavaScript loads.
+
 ## Verify
+
+```bash
+curl -s localhost:5173/api/health   # the API's answer, through Vite
+```
+
+In the browser at http://localhost:5173:
+
+1. The footer shows `react-hono-postgres · development · dev · db up`.
+2. Sign the guestbook: the entry appears at the top without a reload.
+3. In DevTools → Network, requests go to `localhost:5173/api/...`, never to `:3000`.
+4. Stop the API (`Ctrl+C`) and reload: the list shows an error and the footer says
+   "API unreachable".
+
+Then check the build has no API address in it:
+
+```bash
+cd examples/react-hono-postgres/frontend
+npm run build
+grep -l 'localhost:3000' dist/assets/* || echo "no API URL in bundle"
+```
 
 ## What you learned
 
+Same-origin `/api` with a proxy in front makes the frontend build independent of where it is
+deployed. That one decision removes CORS and per-environment builds.
+
 ## Undo
+
+Stop both dev servers. `rm -rf dist` removes the test build.

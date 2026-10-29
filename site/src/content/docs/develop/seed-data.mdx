@@ -6,18 +6,69 @@ sidebar:
   order: 9
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import seed from '../../../../../examples/react-hono-postgres/backend/src/db/seed.ts?raw'
+
 ## Goal
 
 Fill the development database with sample entries, and only the development database.
 
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
-
 ## Steps
+
+### 1. The seed script
+
+<Code code={seed} lang="ts" title="backend/src/db/seed.ts" />
+
+- Seed data is **not a migration**. Migrations run everywhere, including production; sample
+  entries must never reach production. (Reference data every environment needs, like the
+  country list in lesson 7.1, *is* a migration.)
+- It refuses to run unless `APP_ENV=development`.
+- The entries are spread over the last six hours, so the list shows realistic times.
+
+### 2. Run it
+
+```bash
+cd examples/react-hono-postgres/backend
+npm run db:seed
+```
+
+```json
+{"level":30,…,"count":6,"msg":"seeded entries"}
+```
+
+Running it twice adds the samples twice. For a clean start, reset the database:
+
+```bash
+docker compose -f ../../../infra/compose/dev.yml down -v
+docker compose -f ../../../infra/compose/dev.yml up -d --wait
+npm run db:migrate && npm run db:seed
+```
 
 ## Verify
 
+```bash
+curl -s localhost:3000/api/entries | jq -r '.[] | .name'
+```
+
+Asha, Ben, Chen, Divya, Emre and Fatima are listed (below anything you posted yourself, as
+theirs are older). Reload the browser to see them with times like "6 hours ago".
+
+Now check the guard:
+
+```bash
+APP_ENV=staging npm run db:seed
+```
+
+It logs `db:seed only runs with APP_ENV=development (got staging)` and inserts nothing.
+(A variable set on the command line wins over `.env`.)
+
 ## What you learned
 
+Separate what every database needs (schema and reference data: migrations) from what only
+your laptop needs (sample data: a seed script with a guard).
+
 ## Undo
+
+`down -v` and migrate again, as above.
+
+Part 1 is done: the guestbook runs locally against Postgres. Part 2 puts it in containers.

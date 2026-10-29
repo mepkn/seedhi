@@ -1,23 +1,134 @@
 ---
 title: "Project setup"
-description: "Create the project, with linting, formatting, a pinned Node version and an .env.example."
+description: "Create the project, with linting, type checks, a pinned Node version and an .env.example."
 sidebar:
   label: "1.1 Project setup"
   order: 1
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import backendPackage from '../../../../../examples/react-hono-postgres/backend/package.json?raw'
+import backendTsconfig from '../../../../../examples/react-hono-postgres/backend/tsconfig.json?raw'
+import envExample from '../../../../../examples/react-hono-postgres/backend/.env.example?raw'
+import gitignore from '../../../../../.gitignore?raw'
+
 ## Goal
 
-Create the project, with linting, formatting, a pinned Node version and an .env.example.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Create the project, with linting, type checks, a pinned Node version and an `.env.example`,
+so the next lessons only add code.
 
 ## Steps
 
+### 1. The layout
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+Two parts, each with its own `package.json` and `node_modules`:
+
+```
+examples/react-hono-postgres/
+  backend/    Hono API, Drizzle schema and migrations, .env.example
+  frontend/   Vite + React app; imports the API contract from backend/
+```
+
+They are separate installs on purpose: in production they are separate things (static files
+and one API container), and nothing has to be hoisted or shared at the root.
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track is being built. Follow React + Hono for now.
+:::
+
+</TabItem>
+</Tabs>
+
+### 2. Pin Node
+
+The repo root has an `.nvmrc` with `22`, and every `package.json` says which Node it needs:
+
+```json
+"engines": { "node": ">=22.18" }
+```
+
+22.18 is the first Node 22 that runs TypeScript files directly, without a build step. The
+backend relies on it.
+
+### 3. The backend's `package.json`
+
+<Code code={backendPackage} lang="json" title="backend/package.json" />
+
+- `dev` runs `src/index.ts` directly, restarts on change (`--watch`) and reads `.env` if it
+  exists. `pino-pretty` makes the JSON logs readable (lesson 1.7).
+- `start` is what the container runs: no watch, no `.env` (the server passes real
+  environment variables).
+- `check` is what CI runs: types, then lint.
+
+### 4. TypeScript without a build
+
+<Code code={backendTsconfig} lang="json" title="backend/tsconfig.json" />
+
+Node only *strips* types, it does not compile. So imports end in `.ts`, and syntax that needs
+compiling (`enum`, `namespace`, constructor parameter properties) is an error
+(`erasableSyntaxOnly`). `tsc` only checks types (`noEmit`).
+
+### 5. `.env.example`
+
+Every variable the backend reads, with a dev default and a comment. It is committed; your
+own `.env` is not.
+
+<Code code={envExample} lang="sh" title="backend/.env.example" />
+
+```bash
+cd examples/react-hono-postgres/backend
+cp .env.example .env
+```
+
+The `.gitignore` at the root makes sure no other env file gets committed:
+
+<Code code={gitignore.slice(gitignore.indexOf('# env files'))} lang="sh" title=".gitignore (end)" />
+
+### 6. Install
+
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+```bash
+cd examples/react-hono-postgres/backend && npm install
+cd ../frontend && npm install
+```
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track is being built.
+:::
+
+</TabItem>
+</Tabs>
+
 ## Verify
+
+```bash
+node -v                        # v22.18.0 or newer
+cd examples/react-hono-postgres
+npm --prefix backend run check
+npm --prefix frontend run check
+git status --short             # .env is not listed
+```
+
+Both checks finish without errors, and `git status` doesn't show `backend/.env`. From the
+repo root, `scripts/check.sh` runs every part's check in one go.
 
 ## What you learned
 
+A project you can come back to has its Node version, its checks and its configuration
+written down: `.nvmrc` and `engines`, a `check` script, and an `.env.example` that lists
+every variable. Secrets go in `.env`, which git ignores.
+
 ## Undo
+
+Nothing on the server. Locally: `rm -rf */node_modules backend/.env`.

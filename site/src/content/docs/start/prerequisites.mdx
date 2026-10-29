@@ -8,16 +8,89 @@ sidebar:
 
 ## Goal
 
-Install the local tools and create the free accounts the guide uses.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Install the local tools and create the free accounts the guide uses. You need the tools now;
+the accounts only from the part that uses them, so create those as you go if you prefer.
 
 ## Steps
 
+### 1. Tools on your computer
+
+| Tool | Version | Why |
+|---|---|---|
+| Node.js | 22.18 or newer | Runs the backend's TypeScript directly, and every build |
+| Docker Desktop (or OrbStack, Colima) | Compose v2 | Postgres in development, the production images later |
+| Git | any recent | The repo, branches, pull requests |
+| `jq` | any | Reading JSON logs and API responses |
+| `curl` | any | Calling the API from the terminal |
+| An SSH key | ed25519 | Logging in to the VPS (from Part 3) |
+
+On macOS with Homebrew:
+
+```bash
+brew install node@22 jq git
+brew install --cask docker   # then open Docker once so it starts
+```
+
+A version manager works just as well; the repo has an `.nvmrc`, so `nvm use` picks the right
+Node.
+
+If you have no SSH key yet:
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com"
+```
+
+### 2. Get the code
+
+```bash
+git clone https://github.com/mepkn/seedhi.git
+cd seedhi
+```
+
+To follow along in your own repo (you need one for CI/CD in Part 5), fork it on GitHub
+instead and clone the fork.
+
+### 3. The server and a domain
+
+- **A VPS**: 1 vCPU, 1 GB RAM, 10 GB disk is enough; that is the point of the guide. Ubuntu
+  or Debian, with SSH access and `sudo`.
+- **A domain on Cloudflare**: the app is reached through a Cloudflare Tunnel, so the server
+  opens no ports. You need two hostnames, `guestbook.<your-domain>` and
+  `guestbook-staging.<your-domain>`.
+
+### 4. Free accounts
+
+| Account | Used in | For |
+|---|---|---|
+| GitHub | Part 4, 5 | Repo, Actions, container registry (GHCR) |
+| Cloudflare | Part 3, 6 | DNS, Tunnel, R2 for backups |
+| UptimeRobot | 6.1 | Uptime checks and a status page |
+| Sentry | 6.2 | Error tracking |
+| Grafana Cloud | 6.3 | Logs and host metrics |
+| PostHog | 6.4 | Product analytics |
+
+All of them have a free tier that this guide stays inside. Lesson 6.7 covers how to keep it
+that way.
+
 ## Verify
+
+```bash
+node -v                 # v22.18.0 or newer
+docker compose version  # Docker Compose version v2.x or newer
+jq --version
+git --version
+```
+
+Every command prints a version. `docker compose version` failing means Docker is not
+running: open Docker Desktop and try again.
 
 ## What you learned
 
+What runs where: your computer builds and runs everything during development, GitHub builds
+the images, the VPS only runs them, and the monitoring lives in cloud free tiers so the small
+server has its memory for the app.
+
 ## Undo
+
+Nothing on the server yet. Locally, `rm -rf seedhi` removes the clone. Cloud accounts are
+cleaned up in lesson 8.3.

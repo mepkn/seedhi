@@ -6,18 +6,87 @@ sidebar:
   order: 3
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import schema from '../../../../../examples/react-hono-postgres/backend/src/db/schema.ts?raw'
+import drizzleConfig from '../../../../../examples/react-hono-postgres/backend/drizzle.config.ts?raw'
+import migration from '../../../../../examples/react-hono-postgres/backend/drizzle/0000_create_entries.sql?raw'
+import migrate from '../../../../../examples/react-hono-postgres/backend/src/db/migrate.ts?raw'
+
 ## Goal
 
-Describe the entries table in Drizzle and create it with migration 0000, not by hand.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Describe the `entries` table in Drizzle and create it with migration `0000`, not by hand.
+Every database, from your laptop to production, gets its tables the same way.
 
 ## Steps
 
+### 1. The schema
+
+<Code code={schema} lang="ts" title="backend/src/db/schema.ts" />
+
+The length limits come from the API contract (`NAME_MAX`, `MESSAGE_MAX`), so the column and
+the validation can't disagree. `created_at` is `timestamp with time zone`: stored in UTC,
+shown in each visitor's own time.
+
+### 2. Generate the migration
+
+<Code code={drizzleConfig} lang="ts" title="backend/drizzle.config.ts" />
+
+```bash
+cd examples/react-hono-postgres/backend
+npm run db:generate
+```
+
+Drizzle Kit compares the schema with the migrations already in `drizzle/` and writes the
+difference as SQL. In the repo this has been done, so it prints
+`No schema changes, nothing to migrate`. The file it wrote:
+
+<Code code={migration} lang="sql" title="backend/drizzle/0000_create_entries.sql" />
+
+Commit the SQL, the `meta/` snapshot and the journal together. Read the SQL before
+committing: it is what will run on production.
+
+### 3. Apply it
+
+<Code code={migrate} lang="ts" title="backend/src/db/migrate.ts" />
+
+```bash
+npm run db:migrate
+```
+
+```json
+{"level":30,"time":"…","track":"react-hono-postgres","env":"development","version":"dev","msg":"migrations applied"}
+```
+
+:::caution[Not `drizzle-kit push`]
+`push` changes the database to match the schema directly, with no file to review and nothing
+to replay on staging and production. Fine for a throwaway prototype; this guide always uses
+migrations.
+:::
+
 ## Verify
+
+```bash
+docker compose -f ../../../infra/compose/dev.yml exec postgres \
+  psql -U guestbook -c '\d entries' -c 'select id, created_at from drizzle.__drizzle_migrations'
+```
+
+`entries` has four columns (`id`, `name` `varchar(40)`, `message` `varchar(280)`,
+`created_at`), and the migrations table has one row.
+
+Run `npm run db:migrate` again: it succeeds and changes nothing, because `0000` is recorded
+as applied.
 
 ## What you learned
 
+The schema in code is the source of truth; migrations are the steps that get each database
+there, in order, once. Part 7 adds more of them, and CI checks that the schema and the
+migrations never drift apart.
+
 ## Undo
+
+```bash
+docker compose -f ../../../infra/compose/dev.yml exec postgres \
+  psql -U guestbook -c 'drop table entries' -c 'drop schema drizzle cascade'
+```
+
+Or wipe the whole database with `down -v` (lesson 1.2).

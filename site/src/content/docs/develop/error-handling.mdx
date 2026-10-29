@@ -6,18 +6,111 @@ sidebar:
   order: 6
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import contract from '../../../../../examples/react-hono-postgres/backend/src/contract.ts?raw'
+import errors from '../../../../../examples/react-hono-postgres/backend/src/lib/errors.ts?raw'
+import app from '../../../../../examples/react-hono-postgres/backend/src/app.ts?raw'
+import rateLimit from '../../../../../examples/react-hono-postgres/backend/src/lib/rate-limit.ts?raw'
+import api from '../../../../../examples/react-hono-postgres/frontend/src/api.ts?raw'
+import entryList from '../../../../../examples/react-hono-postgres/frontend/src/components/EntryList.tsx?raw'
+import errorNote from '../../../../../examples/react-hono-postgres/frontend/src/components/ErrorNote.tsx?raw'
+
+export const errorBody = contract.slice(contract.indexOf('export type ErrorCode'), contract.indexOf('// First message'))
+export const handlers = app.slice(app.indexOf('function errorBody'))
+export const listStates = entryList.slice(entryList.indexOf('export function EntryList'), entryList.indexOf('  return (\n    <ul className="space-y-3">'))
+
 ## Goal
 
-Every error has the same shape, and the UI shows loading, empty and error states with a request ID.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Every error has the same shape, and the UI shows loading, empty and error states with a
+request ID a user can quote.
 
 ## Steps
 
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+### 1. One error shape
+
+<Code code={errorBody} lang="ts" title="backend/src/contract.ts" />
+
+### 2. Expected and unexpected errors
+
+An expected error (bad input, too many requests, not found) is an `AppError`:
+
+<Code code={errors} lang="ts" title="backend/src/lib/errors.ts" />
+
+Hono's `onError` turns it into the standard body. Anything else is a bug: it is logged in
+full, and the client gets only "Something went wrong." and the request ID. Stack traces and
+SQL never reach the browser.
+
+<Code code={handlers} lang="ts" title="backend/src/app.ts (end)" />
+
+### 3. Rate limiting is an expected error too
+
+<Code code={rateLimit} lang="ts" title="backend/src/lib/rate-limit.ts" />
+
+Every `POST` counts, valid or not: five per IP per minute, then `429`.
+
+### 4. One error class in the frontend
+
+<Code code={api} lang="ts" title="frontend/src/api.ts" />
+
+Network failures, our API's errors and a proxy's bare `502` all become an `ApiError`, so
+components handle one thing.
+
+### 5. Every state on screen
+
+<Code code={listStates} lang="tsx" title="frontend/src/components/EntryList.tsx" />
+
+<Code code={errorNote} lang="tsx" title="frontend/src/components/ErrorNote.tsx" />
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track is being built.
+:::
+
+</TabItem>
+</Tabs>
+
 ## Verify
+
+With the API running:
+
+```bash
+curl -s localhost:3000/api/nope
+# {"error":{"code":"NOT_FOUND","message":"Not found.","requestId":"…"}}
+
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -w '%{http_code} ' -X POST localhost:3000/api/entries \
+    -H 'content-type: application/json' -d '{"name":"R","message":"r"}'
+done; echo
+# 201 201 201 201 201 429   (fewer 201s if you posted in the last minute)
+```
+
+An unexpected error: stop Postgres, then ask for the entries.
+
+```bash
+docker compose -f ../../../infra/compose/dev.yml stop
+curl -s -w ' %{http_code}\n' localhost:3000/api/entries
+# {"error":{"code":"INTERNAL","message":"Something went wrong.","requestId":"42851e89-…"}} 500
+```
+
+The API's terminal shows `ERROR: unhandled error` with the same `requestId` and the real
+cause. With the frontend running (lesson 1.8), reload the page now: the list shows the error
+with `ref 42851e89-…` and a **Try again** button. Start Postgres again
+(`docker compose … start --wait`) and press it: the entries load.
+
+The empty state: on an empty database (`down -v`, then `npm run db:migrate`) the list says
+"No entries yet. Be the first to sign."
 
 ## What you learned
 
+Users get a short message and a reference; you get the full story in the logs under the same
+reference. Expected errors are answered as they are; everything else is a 500 that reveals
+nothing.
+
 ## Undo
+
+Start Postgres again if you stopped it.

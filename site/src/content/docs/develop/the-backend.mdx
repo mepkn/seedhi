@@ -6,18 +6,124 @@ sidebar:
   order: 4
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import env from '../../../../../examples/react-hono-postgres/backend/src/env.ts?raw'
+import client from '../../../../../examples/react-hono-postgres/backend/src/db/client.ts?raw'
+import entries from '../../../../../examples/react-hono-postgres/backend/src/routes/entries.ts?raw'
+import health from '../../../../../examples/react-hono-postgres/backend/src/routes/health.ts?raw'
+import index from '../../../../../examples/react-hono-postgres/backend/src/index.ts?raw'
+
 ## Goal
 
-Write GET/POST /api/entries and /api/health: Hono routes, or Next.js Route Handlers and a Server Action.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Write `GET /api/entries`, `POST /api/entries` and `GET /api/health`, and call them with
+`curl`.
 
 ## Steps
 
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+### 1. Configuration, checked at startup
+
+<Code code={env} lang="ts" title="backend/src/env.ts" />
+
+Every other file imports `env` from here, never `process.env`. A typo in `.env` stops the
+API immediately with the variable's name, not on the first request an hour later.
+
+### 2. One connection pool
+
+<Code code={client} lang="ts" title="backend/src/db/client.ts" />
+
+### 3. The routes
+
+<Code code={entries} lang="ts" title="backend/src/routes/entries.ts" />
+
+`GET` returns the latest 50 entries, newest first. `POST` validates the body (lesson 1.5),
+inserts it and answers `201` with the new entry. Dates leave the API as ISO strings in UTC.
+
+<Code code={health} lang="ts" title="backend/src/routes/health.ts" />
+
+Health checks the database on every call. Uptime monitoring (lesson 6.1) relies on the
+`503` when Postgres is down, and the footer shows `track`, `env` and `version`.
+
+### 4. Start the server
+
+`app.ts` mounts the routes under `/api` (lessons 1.6 and 1.7 cover the rest of it);
+`index.ts` starts it:
+
+<Code code={index} lang="ts" title="backend/src/index.ts" />
+
+```bash
+cd examples/react-hono-postgres/backend
+npm run dev
+```
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track (Route Handlers for `/api/*`, a Server Action for the form) is being built.
+:::
+
+</TabItem>
+</Tabs>
+
 ## Verify
+
+With Postgres up and the API running, in a second terminal:
+
+```bash
+curl -i localhost:3000/api/health
+```
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+x-request-id: 523009b1-51fe-49cf-bbb3-0fa9af87c326
+
+{"ok":true,"db":"up","track":"react-hono-postgres","env":"development","version":"dev"}
+```
+
+```bash
+curl -s -X POST localhost:3000/api/entries \
+  -H 'content-type: application/json' \
+  -d '{"name":"  Ada ","message":"Hello"}'
+curl -s localhost:3000/api/entries | jq
+```
+
+The `POST` answers `{"id":1,"name":"Ada","message":"Hello","createdAt":"…"}` (the spaces
+around the name are trimmed), and the list contains it.
+
+Now stop Postgres and ask again:
+
+```bash
+docker compose -f ../../../infra/compose/dev.yml stop
+curl -s -w ' %{http_code}\n' localhost:3000/api/health
+docker compose -f ../../../infra/compose/dev.yml start --wait
+```
+
+Health answers `{"ok":false,"db":"down",…} 503` while it is stopped and `200` again after.
+The API itself never crashed.
+
+Finally, break the config on purpose:
+
+```bash
+DATABASE_URL=mysql://x node src/index.ts
+```
+
+```
+Invalid environment:
+✖ Invalid URL
+  → at DATABASE_URL
+```
 
 ## What you learned
 
+An API is a few small routes plus the things around them: config validated once at startup,
+one shared connection pool, and a health endpoint that tells the truth about its
+dependencies.
+
 ## Undo
+
+Stop the API with `Ctrl+C`. The test entry stays in the database; `down -v` (lesson 1.2)
+wipes it.

@@ -8,14 +8,25 @@ repo `mepkn/seedhi` (public).
 branches and CI/CD, migrations, VPS memory budget, monitoring tools, alerts, the lesson list and
 names. Don't re-decide what it settles; if something must change, update PLAN.md too.
 
-## Status (2026-10-29)
+## Status (2026-10-29, session 2)
 
 Done:
 - `examples/react-hono-postgres/`: backend (Hono, Drizzle, Zod, pino, request IDs, rate limit,
   migration 0000, seed) and frontend (Vite + React + Tailwind, form validation, loading/empty/error
   states, footer from `/api/health`). Verified locally against Postgres and in the browser.
-- `site/`: Starlight with all 49 pages. Written: home page and 0.1. Every other lesson is a
-  stub (Goal filled in, sections empty, a "Being written" note).
+- `site/`: Starlight with all 49 pages. Written: home page, Part 0 (0.1–0.3) and Part 1
+  (1.1–1.9, React + Hono tabs; Next.js tabs say "Coming"). Code in Part 1 is imported from
+  `examples/` with `?raw` (path `../../../../../examples/...` from a lesson; excerpts via
+  `.slice(indexOf(...))` in an `export const`). Every other lesson is a stub (Goal filled in,
+  sections empty, a "Being written" note).
+- Part 1 Verify steps were all run against a fresh dev database on 2026-10-29 (outputs in the
+  lessons are real). 0.3's baseline commands were tested on the VPS (in a temp folder, then
+  removed). Findings for Part 3: used memory ~345 MB (PLAN says ~300), 512 MB swap already
+  exists and is `virtual` on `/dev/loop12` (likely a container VPS: check whether a swapfile is
+  even possible before writing 3.2), no `/etc/docker/daemon.json`, no `deploy` user, `/srv` has
+  only `pralekh`, 8 containers, `pkn` runs docker without sudo.
+- Real baseline saved 2026-10-29: `~/seedhi-baseline/` on the VPS and on the Mac (11 files,
+  outside the repo). Lesson 8.2 diffs against it; don't delete either copy before then.
 - `infra/compose/dev.yml` (Postgres 18 for development), `scripts/check.sh`, `scripts/deploy-site.sh`.
 - Guide deployed: `/var/www/seedhi`, `/etc/caddy/sites/seedhi.caddy` (multi-page static block
   with a 404 page, not the SPA block).
@@ -23,14 +34,12 @@ Done:
   `http://localhost:8080`). No Caddy files for the guestbook hostnames yet (lesson 3.4).
 
 Next, in order:
-1. Write lessons 0.2, 0.3 and Part 1 (1.1–1.9) against the working React + Hono code, with
-   Next.js tabs left as "coming" until that track exists.
-2. Build `examples/nextjs-fullstack-postgres/` (Route Handlers for `/api/*`, a Server Action for
+1. Build `examples/nextjs-fullstack-postgres/` (Route Handlers for `/api/*`, a Server Action for
    the form, same schema and migrations), add it to `scripts/check.sh` plus the check that both
    `drizzle/` folders are identical. Fill the Next.js tabs in Part 1.
-3. Part 2: Dockerfiles for both tracks, compose for running production images locally, the env
+2. Part 2: Dockerfiles for both tracks, compose for running production images locally, the env
    files lesson (2.3).
-4. Then Parts 3–8 in order, each verified on the real VPS before its lesson is written.
+3. Then Parts 3–8 in order, each verified on the real VPS before its lesson is written.
 
 Later (user's own task): add Seedhi to https://dash.pknspace.com/edit (web + source links).
 

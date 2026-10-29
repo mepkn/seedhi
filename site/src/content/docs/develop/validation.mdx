@@ -6,18 +6,93 @@ sidebar:
   order: 5
 ---
 
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components'
+import contract from '../../../../../examples/react-hono-postgres/backend/src/contract.ts?raw'
+import form from '../../../../../examples/react-hono-postgres/frontend/src/components/EntryForm.tsx?raw'
+import viteConfig from '../../../../../examples/react-hono-postgres/frontend/vite.config.ts?raw'
+
+export const contractTop = contract.slice(0, contract.indexOf('export type Entry'))
+export const submit = form.slice(form.indexOf('  async function submit'), form.indexOf('  return (\n'))
+
 ## Goal
 
-One Zod schema checks input in the form and again on the server, which answers 400 with per-field messages.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+One Zod schema checks input in the form and again on the server, which answers `400` with
+a message per field.
 
 ## Steps
 
+<Tabs syncKey="track">
+<TabItem label="React + Hono">
+
+### 1. The contract
+
+<Code code={contractTop} lang="ts" title="backend/src/contract.ts (start)" />
+
+It lives in the backend and imports nothing server-only, so the frontend can import it too.
+`.trim()` runs before the length checks: a name of only spaces is empty.
+
+### 2. Share it with the frontend
+
+<Code code={viteConfig} lang="ts" title="frontend/vite.config.ts" mark={['@contract', "dedupe: ['zod']"]} />
+
+The frontend imports `@contract`; `frontend/tsconfig.app.json` has the matching path. The
+same file is now the validation on both sides.
+
+### 3. Validate in the form
+
+<Code code={submit} lang="tsx" title="frontend/src/components/EntryForm.tsx (submit)" />
+
+The form catches mistakes before a request is sent, and also shows the server's per-field
+messages if the server disagrees.
+
+### 4. Validate again on the server
+
+The `POST` handler (lesson 1.4) runs the same `NewEntry.safeParse` and throws a
+`VALIDATION_FAILED` error with `fieldErrors(...)`. Anyone can send a request without your
+form, so the server never trusts it.
+
+</TabItem>
+<TabItem label="Next.js">
+
+:::note[Coming]
+The Next.js track is being built.
+:::
+
+</TabItem>
+</Tabs>
+
 ## Verify
+
+Skip the form and send bad input straight to the API:
+
+```bash
+curl -s -X POST localhost:3000/api/entries \
+  -H 'content-type: application/json' \
+  -d "{\"name\":\"\",\"message\":\"$(printf 'x%.0s' {1..300})\"}" | jq
+```
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "Check the highlighted fields.",
+    "requestId": "c5322c52-61eb-4a36-be5e-b49ef7d0d68d",
+    "fields": {
+      "name": "Name is required",
+      "message": "Message must be at most 280 characters"
+    }
+  }
+}
+```
+
+In the browser (lesson 1.8), submit the empty form: both fields show their message and no
+request appears in the Network tab.
 
 ## What you learned
 
+Validate in the browser for a quick answer, on the server for safety, and use one schema
+for both so the rules can't drift. The database column limits come from the same constants.
+
 ## Undo
+
+Nothing to undo.
