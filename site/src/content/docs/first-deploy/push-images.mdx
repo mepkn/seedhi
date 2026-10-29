@@ -120,8 +120,10 @@ docker build --platform linux/amd64 --provenance=false \
 </TabItem>
 </Tabs>
 
-- **The label** links the package to your repo on GitHub, so it shows on the repo page and,
-  in Part 5, a workflow in that repo may push to it.
+- **The label** tells GHCR which repo the image comes from. A package created by a push
+  with this label is linked to that repo, so it shows on the repo page and, in Part 5, a
+  workflow in that repo may push to it. The label is read only when the package is created:
+  a package that already exists stays unlinked until you link it (step 6).
 - **`--provenance=false`.** By default BuildKit adds a provenance attestation, which turns the
   push into an index of two manifests (the image and an `unknown/unknown` entry). GHCR then
   doesn't see the label, and the package page lists the extra entry as a second platform. One
@@ -149,8 +151,20 @@ Same digest twice: two names, one image. The second push sends no layers.
 A package pushed from your computer starts **private**. The images hold no secrets (lesson 2.3
 checked), so this guide makes them public, and the server pulls them without a token. On
 GitHub: your profile → Packages → the package → Package settings → Danger zone → Change
-visibility → Public. Make sure "Repository source" on that page names your repo; if not,
-"Connect repository" sets it.
+visibility → Public. On the package page, the right sidebar should name your repo. If it
+offers **Connect Repository** instead, click it and pick the repo. This guide needed that:
+its first push went out without `--provenance=false`, which created both packages unlinked.
+Check it from the terminal:
+
+```bash
+gh api /users/$OWNER/packages/container/seedhi-react-api --jq .repository.full_name
+```
+
+```
+<your-github-user>/seedhi
+```
+
+`null` means not linked.
 
 :::note[Keeping images private]
 For private images the server must log in too: create a classic token with only
