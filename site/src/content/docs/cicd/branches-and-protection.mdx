@@ -6,18 +6,210 @@ sidebar:
   order: 1
 ---
 
+import { Code } from '@astrojs/starlight/components'
+import mainRuleset from '../../../../../infra/github/rulesets/main.json?raw'
+import stagingRuleset from '../../../../../infra/github/rulesets/staging.json?raw'
+
 ## Goal
 
-main, staging and feature branches; changes only through pull requests that pass CI.
-
-:::note[Being written]
-The steps for this lesson are coming next.
-:::
+Give the repository the branch layout the rest of Part 5 builds on: `main` is production,
+`staging` is staging, and everything else is a feature branch. `main` and `staging` only
+change through pull requests, can't be force-pushed and can't be deleted. Lesson 5.2 adds
+"CI must pass" to the same rules.
 
 ## Steps
 
+### 1. The flow
+
+```
+feature ──PR──► staging ──PR──► main
+                  │               │
+             deploy staging   deploy production
+```
+
+- **Feature branches** (`add-country`, `fix-footer`) start from `staging` and come back as a
+  pull request. CI checks them (5.2); nothing is deployed.
+- **`staging`** is what QA tests. Every merge deploys it to `guestbook-staging.<your-domain>`
+  (5.3).
+- **`main`** is what runs in production. The only way in is a pull request from `staging`, so
+  merging it means "QA approved this" (5.4). The one exception is a hotfix (5.6).
+
+Each branch has one job, so "what is in production?" is always "whatever `main` says".
+
+### 2. Create `staging`
+
+`staging` starts as a copy of `main`. You can push it from your computer without checking it
+out:
+
+```bash
+git fetch
+git push origin main:refs/heads/staging
+```
+
+```
+To github.com:<your-github-user>/seedhi.git
+ * [new branch]      main -> staging
+```
+
+Leave `main` as the default branch: it's what visitors to the repository see, and what
+pull requests compare against unless you pick another base.
+
+### 3. Pick the merge methods
+
+GitHub can merge a pull request three ways. Two of them matter here:
+
+- **Squash** into `staging`: a feature branch with ten "wip" commits becomes one commit named
+  after the pull request. `staging`'s history reads as a list of features.
+- **Merge commit** into `main`: `main` gets `staging`'s commits as they are, plus one commit
+  that records the promotion. Afterwards `staging` and `main` share their history, so the next
+  promotion contains only what's new.
+
+Never squash `staging` into `main`. The squashed commit is new, `staging` doesn't contain it,
+and the next pull request from `staging` shows every change since the start again, often with
+conflicts. The rules below allow only merge commits on `main`, so it can't happen by
+accident. `staging` allows both, because a hotfix brings `main` back into `staging` with a
+merge commit (5.6).
+
+### 4. The rulesets
+
+GitHub has two ways to protect a branch: the older *branch protection rules* and
+*rulesets*. Rulesets are the newer one: several can apply to a branch, they can be exported
+and imported as JSON, and they're free on public repositories. This guide keeps them in the
+repository, one per branch:
+
+<Code code={mainRuleset} lang="json" title="infra/github/rulesets/main.json" />
+
+- **`deletion`** and **`non_fast_forward`**: nobody can delete the branch or rewrite its
+  history with a force push.
+- **`pull_request`**: every change comes through a pull request. Approvals are `0` because
+  you work alone and GitHub never lets you approve your own pull request; in a team, set it
+  to `1`.
+- **`allowed_merge_methods`**: `merge` only, step 3's rule.
+- **`bypass_actors`**: role `5` is *Repository admin*, the owner of a personal repository.
+  `always` lets you push straight to the branch when you mean to (fixing a typo in a README),
+  and GitHub says so every time: `remote: Bypassed rule violations for refs/heads/main`. Use
+  `pull_request` instead to allow bypassing only on a pull request's merge button, or delete
+  the block to apply the rules to everyone, you included.
+
+`staging.json` is the same with `refs/heads/staging` and both merge methods:
+
+<Code code={stagingRuleset} lang="json" title="infra/github/rulesets/staging.json" />
+
+Create both from the repository folder:
+
+```bash
+for b in main staging; do
+  gh api -X POST repos/<your-github-user>/seedhi/rulesets \
+    --input infra/github/rulesets/$b.json --jq '{id,name,enforcement}'
+done
+```
+
+```json
+{"enforcement":"active","id":26149345,"name":"main"}
+{"enforcement":"active","id":26149347,"name":"staging"}
+```
+
+The same settings are under the repository's **Settings → Rules → Rulesets → New branch
+ruleset**: name, enforcement **Active**, bypass list **Repository admin**, target branch
+`main`, then **Restrict deletions**, **Block force pushes** and **Require a pull request
+before merging** with *Allowed merge methods* set to *Merge*. **Import a ruleset** on the same
+page reads the JSON files.
+
 ## Verify
+
+The rules GitHub now applies to `staging`:
+
+```bash
+gh api repos/<your-github-user>/seedhi/rules/branches/staging \
+  --jq '.[] | [.type, (.parameters.allowed_merge_methods // "" | tostring)] | @tsv'
+```
+
+```
+deletion
+non_fast_forward
+pull_request	["squash","merge"]
+```
+
+To see the rules turned on you, switch the bypass to pull requests only for a moment, the way
+a collaborator without admin rights would meet them (use your `staging` ruleset's ID):
+
+```bash
+gh api -X PUT repos/<your-github-user>/seedhi/rulesets/<staging-id> --input - <<'EOF'
+{"bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]}
+EOF
+git switch -c ruleset-test
+git commit --allow-empty -m "chore: ruleset test"
+git push origin ruleset-test:staging
+git push origin --delete staging
+```
+
+```
+remote: error: GH013: Repository rule violations found for refs/heads/staging.
+remote: Review all repository rules at https://github.com/<your-github-user>/seedhi/rules?ref=refs%2Fheads%2Fstaging
+remote:
+remote: - Changes must be made through a pull request.
+remote:
+ ! [remote rejected] ruleset-test -> staging (push declined due to repository rule violations)
+...
+ ! [remote rejected] staging (push declined due to repository rule violations)
+```
+
+Both rejected: the commit because it didn't come through a pull request, the deletion
+because of `deletion`. Put the bypass back and clean up:
+
+```bash
+gh api -X PUT repos/<your-github-user>/seedhi/rulesets/<staging-id> --input - <<'EOF'
+{"bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]}
+EOF
+git switch main
+git branch -D ruleset-test
+```
+
+Last, walk the flow once with a real change. This lesson reached the guide that way:
+
+```bash
+git switch -c lesson-5-1 origin/staging
+# edit, commit
+git push -u origin lesson-5-1
+gh pr create --base staging --fill
+gh pr merge --squash --delete-branch
+gh pr create --base main --head staging --title "Promote staging to main" --body ""
+gh pr merge staging --merge
+git fetch
+git log --oneline --graph -4 origin/main
+```
+
+```
+*   a1d4c2e Merge pull request #2 from <your-github-user>/staging
+|\
+| * 6b0f9e1 feat: lesson 5.1 branches and protection (#1)
+|/
+* 71a12be fix: GHCR repo link needs Connect Repository for existing packages
+```
+
+`--delete-branch` removes the feature branch after the merge; `staging` is never deleted,
+the `deletion` rule makes sure of it. Trying `gh pr merge staging --squash` on the second pull
+request fails with `Squash merges are not allowed on this repository`… on `main` only.
 
 ## What you learned
 
+Branches stand for environments: what's on `main` runs in production, what's on `staging`
+runs on staging, and a pull request is the only door between them. The rules are code: two
+JSON files in the repository, applied with one command and easy to read back. Merge methods
+aren't a matter of taste here: squash keeps `staging` readable, merge commits keep `main` and
+`staging` sharing their history. As the owner you can bypass the rules, and GitHub records
+every time you do.
+
 ## Undo
+
+Delete the rulesets first (the `deletion` rule protects `staging` until then), then the
+branch:
+
+```bash
+gh api repos/<your-github-user>/seedhi/rulesets --jq '.[] | "\(.id) \(.name)"'
+gh api -X DELETE repos/<your-github-user>/seedhi/rulesets/<main-id>
+gh api -X DELETE repos/<your-github-user>/seedhi/rulesets/<staging-id>
+git push origin --delete staging
+```
+
+Part 8 removes them with the rest of the cloud side (8.3). The repository itself stays.

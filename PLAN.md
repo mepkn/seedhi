@@ -112,8 +112,13 @@ feature ──PR──► staging ──PR──► main
 - Images are built for `linux/amd64` with `--provenance=false` (one manifest, so GHCR reads
   the `org.opencontainers.image.source` label that links the package to the repo). GHCR
   packages are **public**: no secrets in images, and the server pulls without a token.
-- Branch protection: PR-only, CI required. Hotfix: branch from `main`, then merge `main` back
-  into `staging`. Rollback: redeploy the previous image.
+- Branch protection: one ruleset per branch (`infra/github/rulesets/{main,staging}.json`,
+  applied with `gh api`): PR-only (0 approvals), no deletion, no force push, CI required (5.2
+  adds the check). Repository admin bypasses (`always`), so the owner can still push guide
+  edits straight to `main` (then `git push origin main:staging` to keep `staging` level).
+  Merge methods: squash or merge into `staging`, merge commit only into `main` (squashing
+  `staging` into `main` would break their shared history). Hotfix: branch from `main`, then
+  merge `main` back into `staging`. Rollback: redeploy the previous image.
 - Builds only in CI, never on the VPS.
 
 ## Database and migrations (Drizzle Kit)
