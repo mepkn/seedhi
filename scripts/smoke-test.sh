@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Smoke test: is the guestbook at BASE_URL up and doing its job? Checks the
-# health endpoint, the page, a validation error, and posts an entry and reads
-# it back. CI runs it against the images in the runner (lesson 5.2); the deploy
-# workflows run it against staging and production.
+# health endpoint, the page, a validation error, posts an entry and reads it
+# back, and checks the list is newest first. CI runs it against the images in
+# the runner (lesson 5.2); the deploy workflows run it against staging and
+# production.
 #   scripts/smoke-test.sh http://localhost:8080
 #   READ_ONLY=1 scripts/smoke-test.sh https://guestbook.example.com   # no POST
 #   EXPECT_VERSION=<sha> …   # health must report this version (after a deploy)
@@ -60,5 +61,11 @@ else
   grep -q "$message" "$body" || fail "the new entry is not in GET /api/entries"
   pass "GET /api/entries 200, has the new entry"
 fi
+
+# Newest first: lesson 5.5's bug (oldest first) got past every check before
+# this one. ISO timestamps sort as text.
+dates=$(grep -o '"createdAt":"[^"]*"' "$body" || true)
+[ "$dates" = "$(sort -r <<<"$dates")" ] || fail "GET /api/entries is not newest first"
+pass "GET /api/entries newest first"
 
 echo "smoke test passed: $BASE_URL"
